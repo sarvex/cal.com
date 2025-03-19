@@ -12,7 +12,7 @@ import {
   WorkflowTemplates,
   WorkflowTriggerEvents,
 } from "@calcom/prisma/enums";
-import type { TrpcSessionUser } from "@calcom/trpc/server/trpc";
+import type { TrpcSessionUser } from "@calcom/trpc/server/types";
 
 import { TRPCError } from "@trpc/server";
 
@@ -68,6 +68,7 @@ export const createHandler = async ({ ctx, input }: CreateOptions) => {
 
     const renderedEmailTemplate = emailReminderTemplate(
       true,
+      ctx.user.locale,
       WorkflowActions.EMAIL_ATTENDEE,
       getTimeFormatStringFromUserTimeFormat(ctx.user.timeFormat)
     );

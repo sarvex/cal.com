@@ -1,5 +1,5 @@
 import { prisma } from "@calcom/prisma";
-import type { TrpcSessionUser } from "@calcom/trpc/server/trpc";
+import type { TrpcSessionUser } from "@calcom/trpc/server/types";
 
 type HasTeamPlanOptions = {
   ctx: {
@@ -23,3 +23,5 @@ export const hasTeamPlanHandler = async ({ ctx }: HasTeamPlanOptions) => {
   });
   return { hasTeamPlan: !!hasTeamPlan };
 };
+
+export default hasTeamPlanHandler;

@@ -2,12 +2,11 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
-import { Toaster } from "react-hot-toast";
+import { Toaster } from "sonner";
 import z from "zod";
 
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { Button, Form, showToast, TextField } from "@calcom/ui";
-import { Check, X } from "@calcom/ui/components/icon";
 
 const formSchema = z.object({
   api_key: z.string(),
@@ -102,7 +101,7 @@ export default function SendgridSetup() {
                     type="submit"
                     loading={testLoading}
                     disabled={testPassed === true}
-                    StartIcon={testPassed !== undefined ? (testPassed ? Check : X) : undefined}
+                    StartIcon={testPassed === undefined ? undefined : testPassed ? "check" : "x"}
                     className={
                       testPassed !== undefined
                         ? testPassed

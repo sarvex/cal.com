@@ -6,9 +6,11 @@ export interface PartialReference {
   uid: string;
   meetingId?: string | null;
   meetingPassword?: string | null;
+  thirdPartyRecurringEventId?: string | null;
   meetingUrl?: string | null;
   externalCalendarId?: string | null;
   credentialId?: number | null;
+  delegationCredentialId?: string | null;
 }
 
 export interface EventResult<T> {
@@ -23,6 +25,7 @@ export interface EventResult<T> {
   calError?: string;
   calWarnings?: string[];
   credentialId?: number;
+  delegatedToId?: string | null;
   externalId?: string | null;
 }
 

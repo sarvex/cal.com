@@ -1,16 +1,23 @@
-import { signIn } from "next-auth/react";
+"use client";
+
+import type { SessionContextValue } from "next-auth/react";
+import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 
-import { VerifyCodeDialog } from "@calcom/features/bookings/components/VerifyCodeDialog";
 import { subdomainSuffix } from "@calcom/features/ee/organizations/lib/orgDomains";
+import { MINIMUM_NUMBER_OF_ORG_SEATS } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import slugify from "@calcom/lib/slugify";
-import { telemetryEventTypes, useTelemetry } from "@calcom/lib/telemetry";
+import { CreationSource } from "@calcom/prisma/enums";
+import { UserPermissionRole } from "@calcom/prisma/enums";
 import { trpc } from "@calcom/trpc/react";
-import { Button, Form, TextField, Alert } from "@calcom/ui";
-import { ArrowRight } from "@calcom/ui/components/icon";
+import type { Ensure } from "@calcom/types/utils";
+import { Alert, Button, Form, Label, RadioGroup as RadioArea, TextField, ToggleGroup } from "@calcom/ui";
+import classNames from "@calcom/ui/classNames";
+
+import { useOnboarding } from "../lib/onboardingStore";
 
 function extractDomainFromEmail(email: string) {
   let out = "";
@@ -21,47 +28,72 @@ function extractDomainFromEmail(email: string) {
   return out.split(".")[0];
 }
 
-export const CreateANewOrganizationForm = ({ slug }: { slug?: string }) => {
-  const { t, i18n } = useLocale();
+export const CreateANewOrganizationForm = () => {
+  const session = useSession();
+
+  const { isLoadingOrgOnboarding } = useOnboarding({ step: "start" });
+  if (!session.data || isLoadingOrgOnboarding) {
+    return null;
+  }
+
+  return <CreateANewOrganizationFormChild session={session} />;
+};
+
+enum BillingPeriod {
+  MONTHLY = "MONTHLY",
+  ANNUALLY = "ANNUALLY",
+}
+
+const CreateANewOrganizationFormChild = ({ session }: { session: Ensure<SessionContextValue, "data"> }) => {
+  const { t } = useLocale();
   const router = useRouter();
-  const telemetry = useTelemetry();
   const [serverErrorMessage, setServerErrorMessage] = useState<string | null>(null);
-  const [showVerifyCode, setShowVerifyCode] = useState(false);
+  const isAdmin = session.data.user.role === UserPermissionRole.ADMIN;
+  const defaultOrgOwnerEmail = session.data.user.email ?? "";
+  const { useOnboardingStore } = useOnboarding({ step: "start" });
+  const { slug, name, orgOwnerEmail, billingPeriod, pricePerSeat, seats, onboardingId, reset } =
+    useOnboardingStore();
 
   const newOrganizationFormMethods = useForm<{
     name: string;
+    seats: number | null;
+    billingPeriod: BillingPeriod;
+    pricePerSeat: number | null;
     slug: string;
-    adminEmail: string;
-    adminUsername: string;
+    orgOwnerEmail: string;
   }>({
     defaultValues: {
-      slug: `${slug ?? ""}`,
+      billingPeriod: billingPeriod ?? BillingPeriod.MONTHLY,
+      slug: slug ?? (!isAdmin ? deriveSlugFromEmail(defaultOrgOwnerEmail) : undefined),
+      orgOwnerEmail: orgOwnerEmail || (!isAdmin ? defaultOrgOwnerEmail : undefined),
+      name: name ?? (!isAdmin ? deriveOrgNameFromEmail(defaultOrgOwnerEmail) : undefined),
+      seats: seats ?? null,
+      pricePerSeat: pricePerSeat ?? null,
     },
   });
-  const watchAdminEmail = newOrganizationFormMethods.watch("adminEmail");
 
-  const createOrganizationMutation = trpc.viewer.organizations.create.useMutation({
+  const intentToCreateOrgMutation = trpc.viewer.organizations.intentToCreateOrg.useMutation({
     onSuccess: async (data) => {
-      if (data.checked) {
-        setShowVerifyCode(true);
-      } else if (data.user) {
-        telemetry.event(telemetryEventTypes.org_created);
-        await signIn("credentials", {
-          redirect: false,
-          callbackUrl: "/",
-          email: data.user.email,
-          password: data.user.password,
-        });
-        router.push(`/settings/organizations/${data.user.organizationId}/set-password`);
+      // TODO: To be moved to _invoice.paid.org.ts
+      // telemetry.event(telemetryEventTypes.org_created);
+      reset({
+        onboardingId: data.organizationOnboardingId,
+        billingPeriod: data.billingPeriod,
+        pricePerSeat: data.pricePerSeat ?? null,
+        seats: data.seats ?? null,
+        orgOwnerEmail: data.orgOwnerEmail,
+        name: data.name,
+        slug: data.slug,
+      });
+
+      if (isAdmin) {
+        router.push("/settings/organizations/new/handover");
+      } else {
+        router.push("/settings/organizations/new/about");
       }
     },
     onError: (err) => {
-      if (err.message === "admin_email_taken") {
-        newOrganizationFormMethods.setError("adminEmail", {
-          type: "custom",
-          message: t("email_already_used"),
-        });
-      } else if (err.message === "organization_url_taken") {
+      if (err.message === "organization_url_taken") {
         newOrganizationFormMethods.setError("slug", { type: "custom", message: t("url_taken") });
       } else if (err.message === "domain_taken_team" || err.message === "domain_taken_project") {
         newOrganizationFormMethods.setError("slug", {
@@ -69,33 +101,68 @@ export const CreateANewOrganizationForm = ({ slug }: { slug?: string }) => {
           message: t("problem_registering_domain"),
         });
       } else {
-        setServerErrorMessage(err.message);
+        setServerErrorMessage(t(err.message));
       }
     },
   });
 
+  const needToCreateOnboarding = !onboardingId;
   return (
     <>
       <Form
         form={newOrganizationFormMethods}
+        className="space-y-5"
         id="createOrg"
-        handleSubmit={(v) => {
-          if (!createOrganizationMutation.isLoading) {
+        handleSubmit={async (v) => {
+          if (!needToCreateOnboarding) {
+            router.push("/settings/organizations/new/about");
+          } else if (!intentToCreateOrgMutation.isPending) {
             setServerErrorMessage(null);
-            createOrganizationMutation.mutate(v);
+            intentToCreateOrgMutation.mutate({ ...v, creationSource: CreationSource.WEBAPP });
           }
         }}>
-        <div className="mb-5">
+        <div>
           {serverErrorMessage && (
             <div className="mb-4">
               <Alert severity="error" message={serverErrorMessage} />
             </div>
           )}
-
+          {isAdmin && (
+            <div className="mb-5">
+              <Controller
+                name="billingPeriod"
+                control={newOrganizationFormMethods.control}
+                render={({ field: { value, onChange } }) => (
+                  <>
+                    <Label htmlFor="billingPeriod">Billing Period</Label>
+                    <ToggleGroup
+                      isFullWidth
+                      id="billingPeriod"
+                      value={value}
+                      onValueChange={(e: BillingPeriod) => {
+                        if ([BillingPeriod.ANNUALLY, BillingPeriod.MONTHLY].includes(e)) {
+                          onChange(e);
+                        }
+                      }}
+                      options={[
+                        {
+                          value: "MONTHLY",
+                          label: "Monthly",
+                        },
+                        {
+                          value: "ANNUALLY",
+                          label: "Annually",
+                        },
+                      ]}
+                    />
+                  </>
+                )}
+              />
+            </div>
+          )}
           <Controller
-            name="adminEmail"
+            name="orgOwnerEmail"
             control={newOrganizationFormMethods.control}
-            defaultValue=""
             rules={{
               required: t("must_enter_organization_admin_email"),
             }}
@@ -104,23 +171,19 @@ export const CreateANewOrganizationForm = ({ slug }: { slug?: string }) => {
                 <TextField
                   containerClassName="w-full"
                   placeholder="john@acme.com"
-                  name="adminEmail"
+                  name="orgOwnerEmail"
+                  disabled={!isAdmin}
                   label={t("admin_email")}
                   defaultValue={value}
                   onChange={(e) => {
-                    const domain = extractDomainFromEmail(e?.target.value);
-                    newOrganizationFormMethods.setValue("adminEmail", e?.target.value.trim());
-                    newOrganizationFormMethods.setValue(
-                      "adminUsername",
-                      e?.target.value.split("@")[0].trim()
-                    );
+                    const email = e?.target.value;
+                    newOrganizationFormMethods.setValue("orgOwnerEmail", email.trim());
                     if (newOrganizationFormMethods.getValues("slug") === "") {
-                      newOrganizationFormMethods.setValue("slug", domain);
+                      const slug = deriveSlugFromEmail(email);
+                      newOrganizationFormMethods.setValue("slug", slug);
                     }
-                    newOrganizationFormMethods.setValue(
-                      "name",
-                      domain.charAt(0).toUpperCase() + domain.slice(1)
-                    );
+                    const name = deriveOrgNameFromEmail(email);
+                    newOrganizationFormMethods.setValue("name", name);
                   }}
                   autoComplete="off"
                 />
@@ -128,7 +191,7 @@ export const CreateANewOrganizationForm = ({ slug }: { slug?: string }) => {
             )}
           />
         </div>
-        <div className="mb-5">
+        <div>
           <Controller
             name="name"
             control={newOrganizationFormMethods.control}
@@ -157,7 +220,7 @@ export const CreateANewOrganizationForm = ({ slug }: { slug?: string }) => {
           />
         </div>
 
-        <div className="mb-5">
+        <div>
           <Controller
             name="slug"
             control={newOrganizationFormMethods.control}
@@ -166,7 +229,6 @@ export const CreateANewOrganizationForm = ({ slug }: { slug?: string }) => {
             }}
             render={({ field: { value } }) => (
               <TextField
-                className="mt-2"
                 name="slug"
                 label={t("organization_url")}
                 placeholder="acme"
@@ -183,15 +245,94 @@ export const CreateANewOrganizationForm = ({ slug }: { slug?: string }) => {
           />
         </div>
 
-        <input hidden {...newOrganizationFormMethods.register("adminUsername")} />
+        {isAdmin && (
+          <>
+            <section className="grid grid-cols-2 gap-2">
+              <div className="w-full">
+                <Controller
+                  name="seats"
+                  control={newOrganizationFormMethods.control}
+                  render={({ field: { value, onChange } }) => (
+                    <div className="flex">
+                      <TextField
+                        containerClassName="w-full"
+                        placeholder="30"
+                        name="seats"
+                        type="number"
+                        label="Seats (optional)"
+                        min={isAdmin ? 1 : MINIMUM_NUMBER_OF_ORG_SEATS}
+                        defaultValue={value || MINIMUM_NUMBER_OF_ORG_SEATS}
+                        onChange={(e) => {
+                          onChange(+e.target.value);
+                        }}
+                        autoComplete="off"
+                      />
+                    </div>
+                  )}
+                />
+              </div>
+              <div className="w-full">
+                <Controller
+                  name="pricePerSeat"
+                  control={newOrganizationFormMethods.control}
+                  render={({ field: { value, onChange } }) => (
+                    <div className="flex">
+                      <TextField
+                        containerClassName="w-full"
+                        placeholder="30"
+                        name="pricePerSeat"
+                        type="number"
+                        addOnSuffix="$"
+                        label="Price per seat (optional)"
+                        defaultValue={value ?? ""}
+                        onChange={(e) => {
+                          onChange(+e.target.value);
+                        }}
+                        autoComplete="off"
+                      />
+                    </div>
+                  )}
+                />
+              </div>
+            </section>
+          </>
+        )}
+
+        {/* This radio group does nothing - its just for visual purposes */}
+        {!isAdmin && (
+          <>
+            <div className="bg-subtle space-y-5  rounded-lg p-5">
+              <h3 className="font-cal text-default text-lg font-semibold leading-4">
+                Upgrade to Organizations
+              </h3>
+              <RadioArea.Group className={classNames("mt-1 flex flex-col gap-4")} value="ORGANIZATION">
+                <RadioArea.Item
+                  className={classNames("bg-default w-full text-sm opacity-70")}
+                  value="TEAMS"
+                  disabled>
+                  <strong className="mb-1 block">{t("teams")}</strong>
+                  <p>{t("your_current_plan")}</p>
+                </RadioArea.Item>
+                <RadioArea.Item className={classNames("bg-default w-full text-sm")} value="ORGANIZATION">
+                  <strong className="mb-1 block">{t("organization")}</strong>
+                  {pricePerSeat && seats ? (
+                    <p>{`$${pricePerSeat} per user per month (${seats} seats minimum) ${
+                      billingPeriod === BillingPeriod.ANNUALLY ? "(billed annually)" : ""
+                    }`}</p>
+                  ) : (
+                    <p>{t("organization_price_per_user_month")}</p>
+                  )}
+                </RadioArea.Item>
+              </RadioArea.Group>
+            </div>
+          </>
+        )}
 
         <div className="flex space-x-2 rtl:space-x-reverse">
           <Button
-            disabled={
-              newOrganizationFormMethods.formState.isSubmitting || createOrganizationMutation.isLoading
-            }
+            loading={newOrganizationFormMethods.formState.isSubmitting || intentToCreateOrgMutation.isPending}
             color="primary"
-            EndIcon={ArrowRight}
+            EndIcon="arrow-right"
             type="submit"
             form="createOrg"
             className="w-full justify-center">
@@ -199,20 +340,18 @@ export const CreateANewOrganizationForm = ({ slug }: { slug?: string }) => {
           </Button>
         </div>
       </Form>
-      <VerifyCodeDialog
-        isOpenDialog={showVerifyCode}
-        setIsOpenDialog={setShowVerifyCode}
-        email={watchAdminEmail}
-        onSuccess={(isVerified) => {
-          if (isVerified) {
-            createOrganizationMutation.mutate({
-              ...newOrganizationFormMethods.getValues(),
-              language: i18n.language,
-              check: false,
-            });
-          }
-        }}
-      />
     </>
   );
 };
+
+export function deriveSlugFromEmail(email: string) {
+  const domain = extractDomainFromEmail(email);
+
+  return domain;
+}
+
+export function deriveOrgNameFromEmail(email: string) {
+  const domain = extractDomainFromEmail(email);
+
+  return domain.charAt(0).toUpperCase() + domain.slice(1);
+}

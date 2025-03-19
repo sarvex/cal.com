@@ -7,8 +7,8 @@ import { v4 as uuidv4 } from "uuid";
 
 import { prisma } from "@calcom/prisma";
 
-import { test } from "./lib/fixtures";
-import { todo } from "./lib/testUtils";
+import { test, todo } from "./lib/fixtures";
+import { submitAndWaitForJsonResponse } from "./lib/testUtils";
 
 declare let global: {
   E2E_EMAILS?: ({ text: string } | Record<string, unknown>)[];
@@ -100,7 +100,7 @@ const addLocationIntegrationToFirstEvent = async function ({ user }: { user: { u
 
 async function bookEvent(page: Page, calLink: string) {
   // Let current month dates fully render.
-  // There is a bug where if we don't let current month fully render and quickly click go to next month, current month get's rendered
+  // There is a bug where if we don't let current month fully render and quickly click go to next month, current month gets rendered
   // This doesn't seem to be replicable with the speed of a person, only during automation.
   // It would also allow correct snapshot to be taken for current month.
   // eslint-disable-next-line playwright/no-wait-for-timeout
@@ -131,8 +131,10 @@ async function bookEvent(page: Page, calLink: string) {
   // --- fill form
   await page.fill('[name="name"]', "Integration User");
   await page.fill('[name="email"]', "integration-user@example.com");
-  await page.press('[name="email"]', "Enter");
-  const response = await page.waitForResponse("**/api/book/event");
+
+  const response = await submitAndWaitForJsonResponse(page, "**/api/book/event", {
+    action: () => page.press('[name="email"]', "Enter"),
+  });
   const responseObj = await response.json();
   const bookingId = responseObj.uid;
   await page.waitForSelector("[data-testid=success-page]");

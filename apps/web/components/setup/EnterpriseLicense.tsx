@@ -3,15 +3,15 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { noop } from "lodash";
 import { useCallback, useState } from "react";
 import { Controller, FormProvider, useForm, useFormState } from "react-hook-form";
-import * as z from "zod";
+import { z } from "zod";
 
-import { classNames } from "@calcom/lib";
 import { CONSOLE_URL } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import type { RouterInputs, RouterOutputs } from "@calcom/trpc/react";
 import { trpc } from "@calcom/trpc/react";
 import { Button, TextField } from "@calcom/ui";
-import { Check, ExternalLink, Loader } from "@calcom/ui/components/icon";
+import { Icon } from "@calcom/ui";
+import classNames from "@calcom/ui/classNames";
 
 type EnterpriseLicenseFormValues = {
   licenseKey: string;
@@ -92,8 +92,8 @@ const EnterpriseLicense = (
         <div>
           <Button
             className="w-full justify-center text-lg"
-            EndIcon={ExternalLink}
-            href="https://console.cal.com"
+            EndIcon="external-link"
+            href="https://go.cal.com/get-license"
             target="_blank">
             {t("purchase_license")}
           </Button>
@@ -115,16 +115,15 @@ const EnterpriseLicense = (
                 placeholder="xxxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxxx"
                 labelSrOnly={true}
                 value={value}
-                addOnFilled={false}
                 addOnClassname={classNames(
                   "hover:border-default",
                   errors.licenseKey === undefined && isDirty && "group-hover:border-emphasis"
                 )}
                 addOnSuffix={
                   checkLicenseLoading ? (
-                    <Loader className="h-5 w-5 animate-spin" />
+                    <Icon name="loader" className="h-5 w-5 animate-spin" />
                   ) : errors.licenseKey === undefined && isDirty ? (
-                    <Check className="h-5 w-5 text-green-700" />
+                    <Icon name="check" className="h-5 w-5 text-green-700" />
                   ) : undefined
                 }
                 color={errors.licenseKey ? "warn" : ""}

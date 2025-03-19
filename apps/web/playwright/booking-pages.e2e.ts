@@ -1,13 +1,19 @@
 import { expect } from "@playwright/test";
+import { JSDOM } from "jsdom";
 
+import { WEBAPP_URL } from "@calcom/lib/constants";
 import { randomString } from "@calcom/lib/random";
+import { SchedulingType } from "@calcom/prisma/client";
+import type { Schedule, TimeRange } from "@calcom/types/schedule";
 
-import { test } from "./lib/fixtures";
+import { test, todo } from "./lib/fixtures";
 import {
   bookFirstEvent,
   bookOptinEvent,
   bookTimeSlot,
-  expectEmailsToHaveSubject,
+  confirmBooking,
+  confirmReschedule,
+  expectSlotNotAllowedToBook,
   selectFirstAvailableTimeSlotNextMonth,
   testEmail,
   testName,
@@ -19,6 +25,79 @@ test.afterEach(async ({ users }) => {
   await users.deleteAll();
 });
 
+test("check SSR and OG - User Event Type", async ({ page, users }) => {
+  const name = "Test User";
+  const user = await users.create({
+    name,
+  });
+  const responsePromise = page.waitForResponse(
+    (response) => response.url().includes(`/${user.username}/30-min`) && response.status() === 200
+  );
+  await page.goto(`/${user.username}/30-min`);
+  await page.content();
+  const response = await responsePromise;
+  const ssrResponse = await response.text();
+  const document = new JSDOM(ssrResponse).window.document;
+
+  const titleText = document.querySelector("title")?.textContent;
+  const ogImage = document.querySelector('meta[property="og:image"]')?.getAttribute("content");
+  const ogUrl = document.querySelector('meta[property="og:url"]')?.getAttribute("content");
+  const canonicalLink = document.querySelector('link[rel="canonical"]')?.getAttribute("href");
+  expect(titleText).toContain(name);
+  expect(ogUrl).toEqual(`${WEBAPP_URL}/${user.username}/30-min`);
+  await page.waitForSelector('[data-testid="avatar-href"]');
+  const avatarLocators = await page.locator('[data-testid="avatar-href"]').all();
+  expect(avatarLocators.length).toBe(1);
+
+  for (const avatarLocator of avatarLocators) {
+    expect(await avatarLocator.getAttribute("href")).toEqual(`${WEBAPP_URL}/${user.username}?redirect=false`);
+  }
+
+  expect(canonicalLink).toEqual(`${WEBAPP_URL}/${user.username}/30-min`);
+  // Verify that there is correct URL that would generate the awesome OG image
+  expect(ogImage).toContain(
+    "/_next/image?w=1200&q=100&url=%2Fapi%2Fsocial%2Fog%2Fimage%3Ftype%3Dmeeting%26title%3D30%2Bmin"
+  );
+  // Verify Organizer Name in the URL
+  expect(ogImage).toContain("meetingProfileName%3DTest%2BUser");
+});
+
+todo("check SSR and OG - Team Event Type");
+
+test.describe("user with a special character in the username", () => {
+  test("/[user] page shouldn't 404", async ({ page, users }) => {
+    const user = await users.create({ username: "franz-janßen" });
+    const response = await page.goto(`/${user.username}`);
+    expect(response?.status()).not.toBe(404);
+  });
+
+  test("/[user]/[type] page shouldn't 404", async ({ page, users }) => {
+    const user = await users.create({ username: "franz-janßen" });
+    const response = await page.goto(`/${user.username}/30-min`);
+    expect(response?.status()).not.toBe(404);
+  });
+
+  test("Should not throw 500 when redirecting user to his/her only event-type page even if username contains special characters", async ({
+    page,
+    users,
+  }) => {
+    const benny = await users.create({
+      username: "ßenny", // ß is a special character
+      eventTypes: [
+        {
+          title: "15 min",
+          slug: "15-min",
+          length: 15,
+        },
+      ],
+      overrideDefaultEventTypes: true,
+    });
+    // This redirects to /[user]/[type] because this user has only 1 event-type
+    const response = await page.goto(`/${benny.username}`);
+    expect(response?.status()).not.toBe(500);
+  });
+});
+
 test.describe("free user", () => {
   test.beforeEach(async ({ page, users }) => {
     const free = await users.create(freeUserObj);
@@ -27,7 +106,11 @@ test.describe("free user", () => {
 
   test("cannot book same slot multiple times", async ({ page, users, emails }) => {
     const [user] = users.get();
-    const bookerObj = { email: `testEmail-${randomString(4)}@example.com`, name: "testBooker" };
+
+    const bookerObj = {
+      email: users.trackEmail({ username: "testEmail", domain: "example.com" }),
+      name: "testBooker",
+    };
     // Click first event type
     await page.click('[data-testid="event-type-link"]');
 
@@ -42,18 +125,9 @@ test.describe("free user", () => {
     await expect(page.locator("[data-testid=success-page]")).toBeVisible();
     const { title: eventTitle } = await user.getFirstEventAsOwner();
 
-    await expectEmailsToHaveSubject({
-      emails,
-      organizer: user,
-      booker: bookerObj,
-      eventTitle,
-    });
     await page.goto(bookingUrl);
 
-    // book same time spot again
-    await bookTimeSlot(page);
-
-    await page.locator("[data-testid=booking-fail]").waitFor({ state: "visible" });
+    await expectSlotNotAllowedToBook(page);
   });
 });
 
@@ -88,10 +162,32 @@ test.describe("pro user", () => {
     });
     await selectFirstAvailableTimeSlotNextMonth(page);
 
-    await page.locator('[data-testid="confirm-reschedule-button"]').click();
+    await confirmReschedule(page);
     await page.waitForURL((url) => {
       return url.pathname.startsWith("/booking");
     });
+  });
+
+  test("it redirects when a rescheduleUid does not match the current event type", async ({
+    page,
+    users,
+    bookings,
+  }) => {
+    const [pro] = users.get();
+    const [eventType] = pro.eventTypes;
+    const bookingFixture = await bookings.create(pro.id, pro.username, eventType.id);
+
+    // open the wrong eventType (rescheduleUid created for /30min event)
+    await page.goto(`${pro.username}/${pro.eventTypes[1].slug}?rescheduleUid=${bookingFixture.uid}`);
+
+    await expect(page).toHaveURL(new RegExp(`${pro.username}/${eventType.slug}`));
+  });
+
+  test("it returns a 404 when a requested event type does not exist", async ({ page, users }) => {
+    const [pro] = users.get();
+    const unexistingPageUrl = new URL(`${pro.username}/invalid-event-type`, WEBAPP_URL);
+    const response = await page.goto(unexistingPageUrl.href);
+    expect(response?.status()).toBe(404);
   });
 
   test("Can cancel the recently created booking and rebook the same timeslot", async ({
@@ -112,6 +208,8 @@ test.describe("pro user", () => {
     await page.waitForURL((url) => {
       return url.pathname.startsWith("/booking/");
     });
+
+    await page.locator('[data-testid="cancel_reason"]').fill("Test reason");
     await page.locator('[data-testid="confirm_cancel"]').click();
 
     const cancelledHeadline = page.locator('[data-testid="cancelled-headline"]');
@@ -122,6 +220,35 @@ test.describe("pro user", () => {
 
     await page.goto(`/${pro.username}`);
     await bookFirstEvent(page);
+  });
+
+  test("Can cancel the recently created booking and shouldn't be allowed to reschedule it", async ({
+    page,
+    users,
+  }, testInfo) => {
+    // Because it tests the entire booking flow + the cancellation + rebooking
+    test.setTimeout(testInfo.timeout * 3);
+    await bookFirstEvent(page);
+    await expect(page.locator(`[data-testid="attendee-email-${testEmail}"]`)).toHaveText(testEmail);
+    await expect(page.locator(`[data-testid="attendee-name-${testName}"]`)).toHaveText(testName);
+
+    const [pro] = users.get();
+    await pro.apiLogin();
+
+    await page.goto("/bookings/upcoming");
+    await page.locator('[data-testid="cancel"]').click();
+    await page.waitForURL((url) => {
+      return url.pathname.startsWith("/booking/");
+    });
+    await page.locator('[data-testid="cancel_reason"]').fill("Test reason");
+    await page.locator('[data-testid="confirm_cancel"]').click();
+
+    const cancelledHeadline = page.locator('[data-testid="cancelled-headline"]');
+    await expect(cancelledHeadline).toBeVisible();
+    const bookingCancelledId = new URL(page.url()).pathname.split("/booking/")[1];
+    await page.goto(`/reschedule/${bookingCancelledId}`);
+    // Should be redirected to the booking details page which shows the cancelled headline
+    await expect(page.locator('[data-testid="cancelled-headline"]')).toBeVisible();
   });
 
   test("can book an event that requires confirmation and then that booking can be accepted by organizer", async ({
@@ -141,6 +268,35 @@ test.describe("pro user", () => {
     await expect(page.locator('[data-testid="empty-screen"]')).toBeVisible();
   });
 
+  test("can book an unconfirmed event multiple times", async ({ page, users }) => {
+    await page.locator('[data-testid="event-type-link"]:has-text("Opt in")').click();
+    await selectFirstAvailableTimeSlotNextMonth(page);
+
+    const pageUrl = page.url();
+
+    await bookTimeSlot(page);
+    await expect(page.locator("[data-testid=success-page]")).toBeVisible();
+
+    // go back to the booking page to re-book.
+    await page.goto(pageUrl);
+    await bookTimeSlot(page, { email: "test2@example.com" });
+    await expect(page.locator("[data-testid=success-page]")).toBeVisible();
+  });
+
+  test("cannot book an unconfirmed event multiple times with the same email", async ({ page, users }) => {
+    await page.locator('[data-testid="event-type-link"]:has-text("Opt in")').click();
+    await selectFirstAvailableTimeSlotNextMonth(page);
+
+    const pageUrl = page.url();
+
+    await bookTimeSlot(page);
+    // go back to the booking page to re-book.
+    await page.goto(pageUrl);
+
+    await bookTimeSlot(page, { expectedStatusCode: 409 });
+    await expect(page.getByText("Could not book the meeting.")).toBeVisible();
+  });
+
   test("can book with multiple guests", async ({ page, users }) => {
     const additionalGuests = ["test@gmail.com", "test2@gmail.com"];
 
@@ -154,7 +310,7 @@ test.describe("pro user", () => {
     await page.locator('[data-testid="add-another-guest"]').click();
     await page.locator('input[type="email"]').nth(2).fill(additionalGuests[1]);
 
-    await page.locator('[data-testid="confirm-book-button"]').click();
+    await confirmBooking(page);
 
     await expect(page.locator("[data-testid=success-page]")).toBeVisible();
 
@@ -164,29 +320,24 @@ test.describe("pro user", () => {
     await Promise.all(promises);
   });
 
-  test("Time slots should be reserved when selected", async ({ context, page }) => {
-    await page.click('[data-testid="event-type-link"]');
-
+  test("Time slots should be reserved when selected", async ({ context, page, browser }) => {
     const initialUrl = page.url();
+    await page.locator('[data-testid="event-type-link"]').first().click();
     await selectFirstAvailableTimeSlotNextMonth(page);
-    const pageTwo = await context.newPage();
-    await pageTwo.goto(initialUrl);
-    await pageTwo.waitForURL(initialUrl);
+    const newContext = await browser.newContext();
+    const pageTwoInNewContext = await newContext.newPage();
+    await pageTwoInNewContext.goto(initialUrl);
+    await pageTwoInNewContext.waitForURL(initialUrl);
+    await pageTwoInNewContext.locator('[data-testid="event-type-link"]').first().click();
 
-    await pageTwo.waitForSelector('[data-testid="event-type-link"]');
-    const eventTypeLink = pageTwo.locator('[data-testid="event-type-link"]').first();
-    await eventTypeLink.click();
-
-    await pageTwo.waitForLoadState("networkidle");
-    await pageTwo.locator('[data-testid="incrementMonth"]').waitFor();
-    await pageTwo.click('[data-testid="incrementMonth"]');
-    await pageTwo.waitForLoadState("networkidle");
-    await pageTwo.locator('[data-testid="day"][data-disabled="false"]').nth(0).waitFor();
-    await pageTwo.locator('[data-testid="day"][data-disabled="false"]').nth(0).click();
+    await pageTwoInNewContext.locator('[data-testid="incrementMonth"]').waitFor();
+    await pageTwoInNewContext.click('[data-testid="incrementMonth"]');
+    await pageTwoInNewContext.locator('[data-testid="day"][data-disabled="false"]').nth(0).waitFor();
+    await pageTwoInNewContext.locator('[data-testid="day"][data-disabled="false"]').nth(0).click();
 
     // 9:30 should be the first available time slot
-    await pageTwo.locator('[data-testid="time"]').nth(0).waitFor();
-    const firstSlotAvailable = pageTwo.locator('[data-testid="time"]').nth(0);
+    await pageTwoInNewContext.locator('[data-testid="time"]').nth(0).waitFor();
+    const firstSlotAvailable = pageTwoInNewContext.locator('[data-testid="time"]').nth(0);
     // Find text inside the element
     const firstSlotAvailableText = await firstSlotAvailable.innerText();
     expect(firstSlotAvailableText).toContain("9:30");
@@ -208,15 +359,14 @@ test.describe("pro user", () => {
 
     await pageTwo.waitForSelector('[data-testid="event-type-link"]');
     const eventTypeLinkTwo = pageTwo.locator('[data-testid="event-type-link"]').first();
+    await eventTypeLinkTwo.waitFor();
     await eventTypeLinkTwo.click();
 
     await page.locator('[data-testid="back"]').waitFor();
     await page.click('[data-testid="back"]');
 
-    await pageTwo.waitForLoadState("networkidle");
     await pageTwo.locator('[data-testid="incrementMonth"]').waitFor();
     await pageTwo.click('[data-testid="incrementMonth"]');
-    await pageTwo.waitForLoadState("networkidle");
     await pageTwo.locator('[data-testid="day"][data-disabled="false"]').nth(0).waitFor();
     await pageTwo.locator('[data-testid="day"][data-disabled="false"]').nth(0).click();
 
@@ -284,6 +434,23 @@ test.describe("prefill", () => {
       await expect(page.locator('[name="email"]')).toHaveValue(testEmail);
     });
   });
+
+  test("skip confirm step if all fields are prefilled from query params", async ({ page }) => {
+    await page.goto("/pro/30min");
+    const url = new URL(page.url());
+    url.searchParams.set("name", testName);
+    url.searchParams.set("email", testEmail);
+    url.searchParams.set("guests", "guest1@example.com");
+    url.searchParams.set("guests", "guest2@example.com");
+    url.searchParams.set("notes", "This is an additional note");
+    await page.goto(url.toString());
+    await selectFirstAvailableTimeSlotNextMonth(page);
+
+    await expect(page.locator('[data-testid="skip-confirm-book-button"]')).toBeVisible();
+    await page.click('[data-testid="skip-confirm-book-button"]');
+
+    await expect(page.locator("[data-testid=success-page]")).toBeVisible();
+  });
 });
 
 test.describe("Booking on different layouts", () => {
@@ -307,11 +474,7 @@ test.describe("Booking on different layouts", () => {
     await page.locator('[name="email"]').fill(`${randomString(4)}@example.com`);
     await page.locator('[name="notes"]').fill("Test notes");
 
-    await page.click('[data-testid="confirm-book-button"]');
-
-    await page.waitForURL((url) => {
-      return url.pathname.startsWith("/booking");
-    });
+    await confirmBooking(page);
 
     // expect page to be booking page
     await expect(page.locator("[data-testid=success-page]")).toBeVisible();
@@ -332,13 +495,91 @@ test.describe("Booking on different layouts", () => {
     await page.locator('[name="email"]').fill(`${randomString(4)}@example.com`);
     await page.locator('[name="notes"]').fill("Test notes");
 
-    await page.click('[data-testid="confirm-book-button"]');
-
-    await page.waitForURL((url) => {
-      return url.pathname.startsWith("/booking");
-    });
+    await confirmBooking(page);
 
     // expect page to be booking page
     await expect(page.locator("[data-testid=success-page]")).toBeVisible();
+  });
+});
+
+test.describe("Booking round robin event", () => {
+  test.beforeEach(async ({ page, users }) => {
+    const teamMatesObj = [{ name: "teammate-1" }];
+
+    const dateRanges: TimeRange = {
+      start: new Date(new Date().setUTCHours(10, 0, 0, 0)), //one hour after default schedule (teammate-1's schedule)
+      end: new Date(new Date().setUTCHours(17, 0, 0, 0)),
+    };
+
+    const schedule: Schedule = [[], [dateRanges], [dateRanges], [dateRanges], [dateRanges], [dateRanges], []];
+
+    const testUser = await users.create(
+      { schedule },
+      {
+        hasTeam: true,
+        schedulingType: SchedulingType.ROUND_ROBIN,
+        teamEventLength: 120,
+        teammates: teamMatesObj,
+        seatsPerTimeSlot: 5,
+      }
+    );
+    const team = await testUser.getFirstTeamMembership();
+    await page.goto(`/team/${team.team.slug}`);
+    await page.waitForLoadState("domcontentloaded");
+  });
+
+  test("Does not book seated round robin host outside availability with date override", async ({
+    page,
+    users,
+  }) => {
+    const [testUser] = users.get();
+    await testUser.apiLogin();
+
+    const team = await testUser.getFirstTeamMembership();
+
+    // Click first event type (round robin)
+    await page.click('[data-testid="event-type-link"]');
+
+    await page.click('[data-testid="incrementMonth"]');
+
+    // books 9AM slots for 120 minutes (test-user is not available at this time, availability starts at 10)
+    await page.locator('[data-testid="time"]').nth(0).click();
+
+    await page.locator('[name="name"]').fill("Test name");
+    await page.locator('[name="email"]').fill(`${randomString(4)}@example.com`);
+
+    await confirmBooking(page);
+
+    await expect(page.locator("[data-testid=success-page]")).toBeVisible();
+
+    await expect(page.locator("[data-testid=success-page]")).toBeVisible();
+
+    const host = page.locator('[data-testid="booking-host-name"]');
+    const hostName = await host.innerText();
+
+    //expect teammate-1 to be booked, test-user is not available at this time
+    expect(hostName).toBe("teammate-1");
+
+    // make another booking to see if also for the second booking teammate-1 is booked
+    await page.goto(`/team/${team.team.slug}`);
+
+    await page.click('[data-testid="event-type-link"]');
+
+    await page.click('[data-testid="incrementMonth"]');
+    await page.click('[data-testid="incrementMonth"]');
+
+    // Again book a 9AM slot for 120 minutes where test-user is not available
+    await page.locator('[data-testid="time"]').nth(0).click();
+
+    await page.locator('[name="name"]').fill("Test name");
+    await page.locator('[name="email"]').fill(`${randomString(4)}@example.com`);
+
+    await confirmBooking(page);
+
+    await expect(page.locator("[data-testid=success-page]")).toBeVisible();
+
+    const hostSecondBooking = page.locator('[data-testid="booking-host-name"]');
+    const hostNameSecondBooking = await hostSecondBooking.innerText();
+    expect(hostNameSecondBooking).toBe("teammate-1"); // teammate-1 should be booked again
   });
 });

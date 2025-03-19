@@ -1,115 +1,24 @@
 import { expect, type Page } from "@playwright/test";
 
+import type { MembershipRole } from "@calcom/prisma/enums";
+
+import { localize, submitAndWaitForResponse } from "../lib/testUtils";
 import type { createUsersFixture } from "./users";
 
-const reschedulePlaceholderText = "Let others know why you need to reschedule";
 export const scheduleSuccessfullyText = "This meeting is scheduled";
-
-const EMAIL = "test@test.com";
-const EMAIL2 = "test2@test.com";
-const PHONE = "+55 (32) 983289947";
-
-type BookingOptions = {
-  hasPlaceholder?: boolean;
-  isReschedule?: boolean;
-  isRequired?: boolean;
-};
-
-interface QuestionActions {
-  [key: string]: () => Promise<void>;
-}
-
-type customLocators = {
-  shouldChangeSelectLocator: boolean;
-  shouldUseLastRadioGroupLocator: boolean;
-  shouldUseFirstRadioGroupLocator: boolean;
-  shouldChangeMultiSelectLocator: boolean;
-};
-
-type fillAndConfirmBookingParams = {
-  eventTypePage: Page;
-  placeholderText: string;
-  question: string;
-  fillText: string;
-  secondQuestion: string;
-  options: BookingOptions;
-};
 
 type UserFixture = ReturnType<typeof createUsersFixture>;
 
-const fillQuestion = async (eventTypePage: Page, questionType: string, customLocators: customLocators) => {
-  const questionActions: QuestionActions = {
-    phone: async () => {
-      await eventTypePage.locator('input[name="phone-test"]').clear();
-      await eventTypePage.locator('input[name="phone-test"]').fill(PHONE);
-    },
-    multiemail: async () => {
-      await eventTypePage.getByRole("button", { name: `${questionType} test` }).click();
-      await eventTypePage.getByPlaceholder(`${questionType} test`).fill(EMAIL);
-      await eventTypePage.getByTestId("add-another-guest").last().click();
-      await eventTypePage.getByPlaceholder(`${questionType} test`).last().fill(EMAIL2);
-    },
-    checkbox: async () => {
-      if (customLocators.shouldUseLastRadioGroupLocator || customLocators.shouldChangeMultiSelectLocator) {
-        await eventTypePage.getByLabel("Option 1").last().click();
-        await eventTypePage.getByLabel("Option 2").last().click();
-      } else if (customLocators.shouldUseFirstRadioGroupLocator) {
-        await eventTypePage.getByLabel("Option 1").first().click();
-        await eventTypePage.getByLabel("Option 2").first().click();
-      } else {
-        await eventTypePage.getByLabel("Option 1").click();
-        await eventTypePage.getByLabel("Option 2").click();
-      }
-    },
-    multiselect: async () => {
-      if (customLocators.shouldChangeMultiSelectLocator) {
-        await eventTypePage.locator("form svg").nth(1).click();
-        await eventTypePage.getByTestId("select-option-Option 1").click();
-      } else {
-        await eventTypePage.locator("form svg").last().click();
-        await eventTypePage.getByTestId("select-option-Option 1").click();
-      }
-    },
-    boolean: async () => {
-      await eventTypePage.getByLabel(`${questionType} test`).check();
-    },
-    radio: async () => {
-      await eventTypePage.locator('[id="radio-test\\.option\\.0\\.radio"]').click();
-    },
-    select: async () => {
-      if (customLocators.shouldChangeSelectLocator) {
-        await eventTypePage.locator("form svg").nth(1).click();
-        await eventTypePage.getByTestId("select-option-Option 1").click();
-      } else {
-        await eventTypePage.locator("form svg").last().click();
-        await eventTypePage.getByTestId("select-option-Option 1").click();
-      }
-    },
-    number: async () => {
-      await eventTypePage.getByPlaceholder(`${questionType} test`).click();
-      await eventTypePage.getByPlaceholder(`${questionType} test`).fill("123");
-    },
-    address: async () => {
-      await eventTypePage.getByPlaceholder(`${questionType} test`).click();
-      await eventTypePage.getByPlaceholder(`${questionType} test`).fill("address test");
-    },
-    textarea: async () => {
-      await eventTypePage.getByPlaceholder(`${questionType} test`).click();
-      await eventTypePage.getByPlaceholder(`${questionType} test`).fill("textarea test");
-    },
-    text: async () => {
-      await eventTypePage.getByPlaceholder(`${questionType} test`).click();
-      await eventTypePage.getByPlaceholder(`${questionType} test`).fill("text test");
-    },
-  };
-
-  if (questionActions[questionType]) {
-    await questionActions[questionType]();
-  }
-};
-
 export async function loginUser(users: UserFixture) {
   const pro = await users.create({ name: "testuser" });
+  await pro.apiLogin();
+}
+
+export async function loginUserWithTeam(users: UserFixture, role: MembershipRole) {
+  const pro = await users.create(
+    { name: "testuser" },
+    { hasTeam: true, teamRole: role, isOrg: true, hasSubteam: true }
+  );
   await pro.apiLogin();
 }
 
@@ -118,138 +27,178 @@ export function createBookingPageFixture(page: Page) {
     goToEventType: async (eventType: string) => {
       await page.getByRole("link", { name: eventType }).click();
     },
+    goToPage: async (pageName: string, page: Page) => {
+      await page.getByRole("link", { name: pageName }).click();
+    },
+    backToBookings: async (page: Page) => {
+      await page.getByTestId("back-to-bookings").click();
+    },
     goToTab: async (tabName: string) => {
       await page.getByTestId(`vertical-tab-${tabName}`).click();
     },
-    addQuestion: async (
-      questionType: string,
-      identifier: string,
-      label: string,
-      isRequired: boolean,
-      placeholder?: string
-    ) => {
-      await page.getByTestId("add-field").click();
-      await page.locator("#test-field-type > .bg-default > div > div:nth-child(2)").first().click();
-      await page.getByTestId(`select-option-${questionType}`).click();
-      await page.getByLabel("Identifier").dblclick();
-      await page.getByLabel("Identifier").fill(identifier);
-      await page.getByLabel("Label").click();
-      await page.getByLabel("Label").fill(label);
-      if (placeholder) {
-        await page.getByLabel("Placeholder").click();
-        await page.getByLabel("Placeholder").fill(placeholder);
-      }
-      if (!isRequired) {
-        await page.getByRole("radio", { name: "No" }).click();
-      }
-      await page.getByTestId("field-add-save").click();
+    goToEventTypesPage: async () => {
+      await page.goto("/event-types");
     },
     updateEventType: async () => {
-      await page.getByTestId("update-eventtype").click();
+      await submitAndWaitForResponse(page, "/api/trpc/eventTypes/update?batch=1", {
+        action: () => page.locator("[data-testid=update-eventtype]").click(),
+      });
     },
     previewEventType: async () => {
       const eventtypePromise = page.waitForEvent("popup");
       await page.getByTestId("preview-button").click();
       return eventtypePromise;
     },
-    selectTimeSlot: async (eventTypePage: Page) => {
-      while (await eventTypePage.getByRole("button", { name: "View next" }).isVisible()) {
-        await eventTypePage.getByRole("button", { name: "View next" }).click();
-      }
-      await eventTypePage.getByTestId("time").first().click();
+    checkRequiresConfirmation: async () => {
+      // Check existence of the icon
+      await expect(page.getByTestId("requires-confirmation-title").locator("svg")).toBeVisible();
+
+      const confirmationSwitch = page.getByTestId("requires-confirmation");
+      await expect(confirmationSwitch).toBeVisible();
+      await confirmationSwitch.click();
     },
-    clickReschedule: async () => {
-      await page.getByText("Reschedule").click();
+    checkRequiresBookerEmailVerification: async () => {
+      await expect(page.getByTestId("requires-booker-email-verification-title").locator("svg")).toBeVisible();
+
+      const emailSwitch = page.getByTestId("requires-booker-email-verification");
+
+      await expect(emailSwitch).toBeVisible();
+      await emailSwitch.click();
     },
-    navigateToAvailableTimeSlot: async () => {
-      while (await page.getByRole("button", { name: "View next" }).isVisible()) {
-        await page.getByRole("button", { name: "View next" }).click();
-      }
+    checkHideNotes: async () => {
+      await expect(page.getByTestId("disable-notes-title").locator("svg")).toBeVisible();
+
+      const hideNotesSwitch = page.getByTestId("disable-notes");
+
+      await expect(hideNotesSwitch).toBeVisible();
+      await hideNotesSwitch.click();
     },
-    selectFirstAvailableTime: async () => {
-      await page.getByTestId("time").first().click();
+    checkRedirectOnBooking: async () => {
+      await expect(page.getByTestId("redirect-success-booking-title").locator("svg")).toBeVisible();
+
+      const redirectSwitch = page.getByTestId("redirect-success-booking");
+      await expect(redirectSwitch).toBeVisible();
+      await redirectSwitch.click();
+      await expect(page.getByTestId("external-redirect-url")).toBeVisible();
+      await page.getByTestId("external-redirect-url").fill("https://cal.com");
+      await expect(page.getByTestId("redirect-url-warning")).toBeVisible();
     },
-    fillRescheduleReasonAndConfirm: async () => {
-      await page.getByPlaceholder(reschedulePlaceholderText).click();
-      await page.getByPlaceholder(reschedulePlaceholderText).fill("Test reschedule");
-      await page.getByTestId("confirm-reschedule-button").click();
+    checkEnablePrivateUrl: async () => {
+      await expect(page.getByTestId("hashedLinkCheck-title").locator("label div")).toBeVisible();
+
+      await expect(page.getByTestId("hashedLinkCheck-info")).toBeVisible();
+      await expect(page.getByTestId("hashedLinkCheck")).toBeVisible();
+      await page.getByTestId("hashedLinkCheck").click();
+      await expect(page.getByTestId("generated-hash-url")).toBeVisible();
     },
+    toggleOfferSeats: async () => {
+      await expect(page.getByTestId("offer-seats-toggle-title").locator("svg")).toBeVisible();
 
-    cancelBookingWithReason: async (page: Page) => {
-      await page.getByTestId("cancel").click();
-      await page.getByTestId("cancel_reason").fill("Test cancel");
-      await page.getByTestId("confirm_cancel").click();
+      await page.getByTestId("offer-seats-toggle").click();
+
+      const seatSwitchField = page.getByTestId("seats-per-time-slot");
+      await seatSwitchField.fill("3");
+      await expect(seatSwitchField).toHaveValue("3");
+      await expect(page.getByTestId("show-attendees")).toBeVisible();
     },
-    assertBookingCanceled: async (page: Page) => {
-      await expect(page.getByTestId("cancelled-headline")).toBeVisible();
+    checkLockTimezone: async () => {
+      await expect(page.getByTestId("lock-timezone-toggle-title").locator("svg")).toBeVisible();
+
+      const lockSwitch = page.getByTestId("lock-timezone-toggle");
+
+      await expect(lockSwitch).toBeVisible();
+      await lockSwitch.click();
     },
-
-    rescheduleBooking: async (eventTypePage: Page) => {
-      await eventTypePage.getByText("Reschedule").click();
-      while (await eventTypePage.getByRole("button", { name: "View next" }).isVisible()) {
-        await eventTypePage.getByRole("button", { name: "View next" }).click();
-      }
-      await eventTypePage.getByTestId("time").first().click();
-      await eventTypePage.getByPlaceholder(reschedulePlaceholderText).click();
-      await eventTypePage.getByPlaceholder(reschedulePlaceholderText).fill("Test reschedule");
-      await eventTypePage.getByTestId("confirm-reschedule-button").click();
+    checkEventType: async () => {
+      await expect(page.getByTestId("requires-confirmation-badge").last()).toBeVisible();
     },
+    checkBufferTime: async () => {
+      const minutes = (await localize("en"))("minutes");
+      const fieldPlaceholder = page.getByPlaceholder("0");
 
-    assertBookingRescheduled: async (page: Page) => {
-      await expect(page.getByText(scheduleSuccessfullyText)).toBeVisible();
+      await page
+        .locator("div")
+        .filter({ hasText: /^No buffer time$/ })
+        .nth(1)
+        .click();
+      await page.getByTestId("select-option-15").click();
+      await expect(page.getByText(`15 ${minutes}`, { exact: true })).toBeVisible();
+
+      await page
+        .locator("div")
+        .filter({ hasText: /^No buffer time$/ })
+        .nth(2)
+        .click();
+      await page.getByTestId("select-option-10").click();
+      await expect(page.getByText(`10 ${minutes}`, { exact: true })).toBeVisible();
+
+      await fieldPlaceholder.fill("10");
+      await expect(fieldPlaceholder).toHaveValue("10");
+
+      await page
+        .locator("div")
+        .filter({ hasText: /^Use event length \(default\)$/ })
+        .first()
+        .click();
+
+      // select a large interval to check if the time slots for a day reduce on the preview page
+      await page.getByTestId("select-option-60").click();
+      await expect(page.getByText(`60 ${minutes}`, { exact: true })).toBeVisible();
     },
+    checkLimitBookingFrequency: async () => {
+      const fieldPlaceholder = page.getByPlaceholder("1").nth(1);
+      const limitFrequency = (await localize("en"))("limit_booking_frequency");
+      const addlimit = (await localize("en"))("add_limit");
+      const limitFrequencySwitch = page
+        .locator("fieldset")
+        .filter({ hasText: limitFrequency })
+        .getByRole("switch");
 
-    cancelBooking: async (eventTypePage: Page) => {
-      await eventTypePage.getByTestId("cancel").click();
-      await eventTypePage.getByTestId("cancel_reason").fill("Test cancel");
-      await eventTypePage.getByTestId("confirm_cancel").click();
-      await expect(eventTypePage.getByTestId("cancelled-headline")).toBeVisible();
+      await limitFrequencySwitch.click();
+      await page.getByRole("button", { name: addlimit }).click();
+      await fieldPlaceholder.fill("12");
+      await expect(fieldPlaceholder).toHaveValue("12");
+      await limitFrequencySwitch.click();
     },
+    checkLimitBookingDuration: async () => {
+      const limitDuration = (await localize("en"))("limit_total_booking_duration");
+      const addlimit = (await localize("en"))("add_limit");
+      const limitDurationSwitch = page
+        .locator("fieldset")
+        .filter({ hasText: limitDuration })
+        .getByRole("switch");
 
-    fillAndConfirmBooking: async ({
-      eventTypePage,
-      placeholderText,
-      question,
-      fillText,
-      secondQuestion,
-      options,
-    }: fillAndConfirmBookingParams) => {
-      const confirmButton = options.isReschedule ? "confirm-reschedule-button" : "confirm-book-button";
+      await limitDurationSwitch.click();
+      await page.getByRole("button", { name: addlimit }).click();
+      await expect(page.getByTestId("add-limit")).toHaveCount(2);
+      await limitDurationSwitch.click();
+    },
+    checkLimitFutureBookings: async () => {
+      const limitFutureBookings = (await localize("en"))("limit_future_bookings");
+      const limitBookingsSwitch = page
+        .locator("fieldset")
+        .filter({ hasText: limitFutureBookings })
+        .getByRole("switch");
 
-      await expect(eventTypePage.getByText(`${secondQuestion} test`).first()).toBeVisible();
-      await eventTypePage.getByPlaceholder(placeholderText).fill(fillText);
+      await limitBookingsSwitch.click();
+      await page.locator("#RANGE").click();
+      await expect(page.locator("#RANGE")).toBeChecked();
+      await limitBookingsSwitch.click();
+    },
+    checkOffsetTimes: async () => {
+      const offsetStart = (await localize("en"))("offset_start");
+      const offsetStartTimes = (await localize("en"))("offset_toggle");
+      const offsetLabel = page.getByLabel(offsetStart);
 
-      // Change the selector for specifics cases related to select question
-      const shouldChangeSelectLocator = (question: string, secondQuestion: string): boolean =>
-        question === "select" && ["multiemail", "multiselect"].includes(secondQuestion);
-
-      const shouldUseLastRadioGroupLocator = (question: string, secondQuestion: string): boolean =>
-        question === "radio" && secondQuestion === "checkbox";
-
-      const shouldUseFirstRadioGroupLocator = (question: string, secondQuestion: string): boolean =>
-        question === "checkbox" && secondQuestion === "radio";
-
-      const shouldChangeMultiSelectLocator = (question: string, secondQuestion: string): boolean =>
-        question === "multiselect" &&
-        ["address", "checkbox", "multiemail", "select"].includes(secondQuestion);
-
-      const customLocators = {
-        shouldChangeSelectLocator: shouldChangeSelectLocator(question, secondQuestion),
-        shouldUseLastRadioGroupLocator: shouldUseLastRadioGroupLocator(question, secondQuestion),
-        shouldUseFirstRadioGroupLocator: shouldUseFirstRadioGroupLocator(question, secondQuestion),
-        shouldChangeMultiSelectLocator: shouldChangeMultiSelectLocator(question, secondQuestion),
-      };
-
-      // Fill the first question
-      await fillQuestion(eventTypePage, question, customLocators);
-
-      // Fill the second question if is required
-      options.isRequired && (await fillQuestion(eventTypePage, secondQuestion, customLocators));
-
-      await eventTypePage.getByTestId(confirmButton).click();
-      const scheduleSuccessfullyPage = eventTypePage.getByText(scheduleSuccessfullyText);
-      await scheduleSuccessfullyPage.waitFor({ state: "visible" });
-      await expect(scheduleSuccessfullyPage).toBeVisible();
+      await page.locator("fieldset").filter({ hasText: offsetStartTimes }).getByRole("switch").click();
+      await offsetLabel.fill("10");
+      await expect(offsetLabel).toHaveValue("10");
+      await expect(
+        page.getByText("e.g. this will show time slots to your bookers at 9:10 AM instead of 9:00 AM")
+      ).toBeVisible();
+    },
+    checkTimeSlotsCount: async (eventTypePage: Page, count: number) => {
+      await expect(eventTypePage.getByTestId("time")).toHaveCount(count);
     },
   };
 }

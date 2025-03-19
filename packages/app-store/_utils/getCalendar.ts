@@ -1,6 +1,6 @@
 import logger from "@calcom/lib/logger";
 import type { Calendar, CalendarClass } from "@calcom/types/Calendar";
-import type { CredentialPayload } from "@calcom/types/Credential";
+import type { CredentialForCalendarService } from "@calcom/types/Credential";
 
 import appStore from "..";
 
@@ -23,12 +23,19 @@ const isCalendarService = (x: unknown): x is CalendarApp =>
   !!x.lib &&
   "CalendarService" in x.lib;
 
-export const getCalendar = async (credential: CredentialPayload | null): Promise<Calendar | null> => {
+export const getCalendar = async (
+  credential: CredentialForCalendarService | null
+): Promise<Calendar | null> => {
   if (!credential || !credential.key) return null;
   let { type: calendarType } = credential;
   if (calendarType?.endsWith("_other_calendar")) {
     calendarType = calendarType.split("_other_calendar")[0];
   }
+  // Backwards compatibility until CRM manager is created
+  if (calendarType?.endsWith("_crm")) {
+    calendarType = calendarType.split("_crm")[0];
+  }
+
   const calendarAppImportFn = appStore[calendarType.split("_").join("") as keyof typeof appStore];
 
   if (!calendarAppImportFn) {

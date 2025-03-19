@@ -1,3 +1,4 @@
+import { workflowSelect } from "@calcom/ee/workflows/lib/getAllWorkflows";
 import { getCalEventResponses } from "@calcom/features/bookings/lib/getCalEventResponses";
 import { isPrismaObjOrUndefined, parseRecurringEvent } from "@calcom/lib";
 import { HttpError as HttpCode } from "@calcom/lib/http-error";
@@ -7,6 +8,9 @@ import { bookingMinimalSelect, prisma } from "@calcom/prisma";
 import { credentialForCalendarServiceSelect } from "@calcom/prisma/selects/credential";
 import { EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
 import type { CalendarEvent } from "@calcom/types/Calendar";
+
+import { enrichUserWithDelegationCredentialsWithoutOrgId } from "../delegationCredential/server";
+import { getBookerBaseUrl } from "../getBookerUrl/server";
 
 async function getEventType(id: number) {
   return prisma.eventType.findUnique({
@@ -29,7 +33,42 @@ export async function getBooking(bookingId: number) {
     select: {
       ...bookingMinimalSelect,
       responses: true,
-      eventType: true,
+      eventType: {
+        select: {
+          currency: true,
+          description: true,
+          id: true,
+          length: true,
+          price: true,
+          requiresConfirmation: true,
+          metadata: true,
+          title: true,
+          teamId: true,
+          parentId: true,
+          parent: {
+            select: {
+              teamId: true,
+            },
+          },
+          slug: true,
+          workflows: {
+            select: {
+              workflow: {
+                select: workflowSelect,
+              },
+            },
+          },
+          bookingFields: true,
+          team: {
+            select: {
+              id: true,
+              name: true,
+              parentId: true,
+            },
+          },
+        },
+      },
+      metadata: true,
       smsReminderNumber: true,
       location: true,
       eventTypeId: true,
@@ -64,9 +103,12 @@ export async function getBooking(bookingId: number) {
 
   const eventType = { ...eventTypeRaw, metadata: EventTypeMetaDataSchema.parse(eventTypeRaw?.metadata) };
 
-  const { user } = booking;
+  const { user: userWithoutDelegationCredentials } = booking;
 
-  if (!user) throw new HttpCode({ statusCode: 204, message: "No user found" });
+  if (!userWithoutDelegationCredentials) throw new HttpCode({ statusCode: 204, message: "No user found" });
+  const user = await enrichUserWithDelegationCredentialsWithoutOrgId({
+    user: userWithoutDelegationCredentials,
+  });
 
   const t = await getTranslation(user.locale ?? "en", "common");
   const attendeesListPromises = booking.attendees.map(async (attendee) => {
@@ -81,11 +123,24 @@ export async function getBooking(bookingId: number) {
     };
   });
 
+  const organizerOrganizationProfile = await prisma.profile.findFirst({
+    where: {
+      userId: booking.userId ?? undefined,
+    },
+  });
+
+  const organizerOrganizationId = organizerOrganizationProfile?.organizationId;
+
+  const bookerUrl = await getBookerBaseUrl(
+    booking.eventType?.team?.parentId ?? organizerOrganizationId ?? null
+  );
+
   const attendeesList = await Promise.all(attendeesListPromises);
   const selectedDestinationCalendar = booking.destinationCalendar || user.destinationCalendar;
   const evt: CalendarEvent = {
-    type: booking.title,
+    type: booking?.eventType?.slug as string,
     title: booking.title,
+    bookerUrl,
     description: booking.description || undefined,
     startTime: booking.startTime.toISOString(),
     endTime: booking.endTime.toISOString(),
@@ -95,13 +150,21 @@ export async function getBooking(bookingId: number) {
       bookingFields: booking.eventType?.bookingFields || null,
     }),
     organizer: {
-      email: user.email,
+      email: booking?.userPrimaryEmail ?? user.email,
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       name: user.name!,
       timeZone: user.timeZone,
       timeFormat: getTimeFormatStringFromUserTimeFormat(user.timeFormat),
       language: { translate: t, locale: user.locale ?? "en" },
       id: user.id,
     },
+    team: !!booking.eventType?.team
+      ? {
+          name: booking.eventType.team.name,
+          id: booking.eventType.team.id,
+          members: [],
+        }
+      : undefined,
     attendees: attendeesList,
     location: booking.location,
     uid: booking.uid,

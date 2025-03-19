@@ -30,6 +30,13 @@ type DynamicLinkBasedEventLocation = {
 
 export type EventLocationTypeFromAppMeta = StaticLinkBasedEventLocation | DynamicLinkBasedEventLocation;
 
+type PaidAppData = {
+  priceInUsd: number;
+  priceId: string;
+  trial?: number;
+  mode?: "subscription" | "one_time";
+};
+
 type AppData = {
   /**
    * TODO: We must assert that if `location` is set in App config.json, then it must have atleast Messaging or Conferencing as a category.
@@ -56,10 +63,10 @@ export interface App {
     | `${string}_messaging`
     | `${string}_payment`
     | `${string}_video`
-    | `${string}_web3`
     | `${string}_other`
     | `${string}_automation`
     | `${string}_analytics`
+    | `${string}_crm`
     | `${string}_other_calendar`;
 
   /**
@@ -80,8 +87,8 @@ export interface App {
     | "video"
     | "other"
     | "other_calendar"
-    | "web3"
-    | "automation";
+    | "automation"
+    | "crm";
   /** The slug for the app store public page inside `/apps/[slug] */
   slug: string;
 
@@ -109,13 +116,13 @@ export interface App {
   url: string;
   /** Optional documentation website URL */
   docsUrl?: string;
-  /** Wether if the app is verified by Cal.com or not */
+  /** Whether the app is verified by Cal.com or not */
   verified?: boolean;
-  /** Wether the app should appear in the trending section of the app store */
+  /** Whether the app should appear in the trending section of the app store */
   trending?: boolean;
-  /** Rating from 0 to 5, harcoded for now. Should be fetched later on. */
+  /** Rating from 0 to 5, hardcoded for now. Should be fetched later on. */
   rating?: number;
-  /** Number of reviews, harcoded for now. Should be fetched later on. */
+  /** Number of reviews, hardcoded for now. Should be fetched later on. */
   reviews?: number;
   /**
    *  Whether if the app is installed globally or needs user intervention.
@@ -142,6 +149,9 @@ export interface App {
     upgradeUrl: string;
   };
   appData?: AppData;
+  /** Represents paid app data, such as price, trials, etc */
+  paid?: PaidAppData;
+
   /**
    * @deprecated
    * Used only by legacy apps which had slug different from their directory name.
@@ -155,6 +165,14 @@ export interface App {
   concurrentMeetings?: boolean;
 
   createdAt?: string;
+  /** Specifies if the App uses an OAuth flow  */
+  isOAuth?: boolean;
+  /**
+   * Specifies if the App supports delegation credential
+   */
+  delegationCredential?: {
+    workspacePlatformSlug: string;
+  };
 }
 
 export type AppFrontendPayload = Omit<App, "key"> & {

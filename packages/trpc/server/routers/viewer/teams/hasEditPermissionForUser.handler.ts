@@ -1,5 +1,5 @@
 import { hasEditPermissionForUserID as $hasEditPermissionForUser } from "@calcom/lib/hasEditPermissionForUser";
-import type { TrpcSessionUser } from "@calcom/trpc/server/trpc";
+import type { TrpcSessionUser } from "@calcom/trpc/server/types";
 
 import type { THasEditPermissionForUserSchema } from "./hasEditPermissionForUser.schema";
 
@@ -17,3 +17,5 @@ export const hasEditPermissionForUser = async ({ ctx, input }: HasEditPermission
     input,
   });
 };
+
+export default hasEditPermissionForUser;

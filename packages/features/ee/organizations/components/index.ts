@@ -1,5 +1,4 @@
 export { CreateANewOrganizationForm } from "./CreateANewOrganizationForm";
 export { AboutOrganizationForm } from "./AboutOrganizationForm";
-export { SetPasswordForm } from "./SetPasswordForm";
-export { AddNewOrgAdminsForm } from "./AddNewOrgAdminsForm";
-export { AddNewTeamsForm } from "./AddNewTeamsForm";
+export { AddNewTeamsForm } from "@calcom/web/modules/settings/organizations/new/_components/AddNewTeamsForm";
+export { AdminOnboardingHandover } from "./AdminOnboardingHandover";

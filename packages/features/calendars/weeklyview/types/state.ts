@@ -1,3 +1,4 @@
+import type { IFromUser, IToUser } from "@calcom/lib/getUserAvailability";
 import type { TimeRange } from "@calcom/types/schedule";
 
 import type { CalendarEvent } from "./events";
@@ -50,11 +51,18 @@ export type CalendarPrivateActions = {
   setSelectedEvent: (event: CalendarEvent) => void;
   handleDateChange: (payload: "INCREMENT" | "DECREMENT") => void;
 };
+type TimeRangeExtended = TimeRange & {
+  away?: boolean;
+  fromUser?: IFromUser;
+  toUser?: IToUser;
+  reason?: string;
+  emoji?: string;
+};
 
 export type CalendarAvailableTimeslots = {
   // Key is the date in YYYY-MM-DD format
   // start and end are ISOstring
-  [key: string]: TimeRange[];
+  [key: string]: TimeRangeExtended[];
 };
 
 export type CalendarState = {
@@ -79,7 +87,7 @@ export type CalendarState = {
   loading?: boolean;
   /** Disables all actions on Events*/
   eventsDisabled?: boolean;
-  /** If you don't want the date to be scrollable past a certian date */
+  /** If you don't want the date to be scrollable past a certain date */
   minDate?: Date;
   /** If you don't want the date to be scrollable past a certain date */
   maxDate?: Date;
@@ -121,6 +129,6 @@ export type CalendarState = {
   hideHeader?: boolean;
 };
 
-export type CalendarComponentProps = CalendarPublicActions & CalendarState & { isLoading?: boolean };
+export type CalendarComponentProps = CalendarPublicActions & CalendarState & { isPending?: boolean };
 
 export type CalendarStoreProps = CalendarComponentProps & CalendarPrivateActions;

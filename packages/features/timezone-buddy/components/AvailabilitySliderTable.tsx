@@ -1,19 +1,26 @@
+"use client";
+
+import { keepPreviousData } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
-import { useMemo, useRef, useCallback, useEffect, useState } from "react";
+import { getCoreRowModel, getFilteredRowModel, useReactTable } from "@tanstack/react-table";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import dayjs from "@calcom/dayjs";
+import { DataTable, DataTableToolbar } from "@calcom/features/data-table";
 import { APP_NAME, WEBAPP_URL } from "@calcom/lib/constants";
 import type { DateRange } from "@calcom/lib/date-ranges";
+import { useDebounce } from "@calcom/lib/hooks/useDebounce";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
+import { CURRENT_TIMEZONE } from "@calcom/lib/timezoneConstants";
 import type { MembershipRole } from "@calcom/prisma/enums";
 import { trpc } from "@calcom/trpc";
-import { Button, ButtonGroup, DataTable } from "@calcom/ui";
-import { UserAvatar } from "@calcom/web/components/ui/avatar/UserAvatar";
+import type { UserProfile } from "@calcom/types/UserProfile";
+import { Button, ButtonGroup, UserAvatar } from "@calcom/ui";
 
 import { UpgradeTip } from "../../tips/UpgradeTip";
-import { TBContext, createTimezoneBuddyStore } from "../store";
+import { createTimezoneBuddyStore, TBContext } from "../store";
 import { AvailabilityEditSheet } from "./AvailabilityEditSheet";
+import { CellHighlightContainer } from "./CellHighlightContainer";
 import { TimeDial } from "./TimeDial";
 
 export interface SliderUser {
@@ -21,11 +28,13 @@ export interface SliderUser {
   username: string | null;
   name: string | null;
   organizationId: number;
+  avatarUrl: string | null;
   email: string;
   timeZone: string;
   role: MembershipRole;
   defaultScheduleId: number | null;
   dateRanges: DateRange[];
+  profile: UserProfile;
 }
 
 function UpgradeTeamTip() {
@@ -33,6 +42,7 @@ function UpgradeTeamTip() {
 
   return (
     <UpgradeTip
+      plan="team"
       title={t("calcom_is_better_with_team", { appName: APP_NAME }) as string}
       description="add_your_team_members"
       background="/tips/teams"
@@ -54,23 +64,29 @@ function UpgradeTeamTip() {
   );
 }
 
-export function AvailabilitySliderTable() {
-  const { t } = useLocale();
+export function AvailabilitySliderTable(props: { userTimeFormat: number | null; isOrg: boolean }) {
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const [browsingDate, setBrowsingDate] = useState(dayjs());
   const [editSheetOpen, setEditSheetOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<SliderUser | null>(null);
+  const [searchString, setSearchString] = useState("");
+  const debouncedSearchString = useDebounce(searchString, 500);
 
-  const { data, isLoading, fetchNextPage, isFetching } = trpc.viewer.availability.listTeam.useInfiniteQuery(
+  const tbStore = createTimezoneBuddyStore({
+    browsingDate: browsingDate.toDate(),
+  });
+
+  const { data, isPending, fetchNextPage, isFetching } = trpc.viewer.availability.listTeam.useInfiniteQuery(
     {
       limit: 10,
-      loggedInUsersTz: dayjs.tz.guess() || "Europe/London",
+      loggedInUsersTz: CURRENT_TIMEZONE,
       startDate: browsingDate.startOf("day").toISOString(),
       endDate: browsingDate.endOf("day").toISOString(),
+      searchString: debouncedSearchString,
     },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
-      keepPreviousData: true,
+      placeholderData: keepPreviousData,
     }
   );
 
@@ -78,10 +94,13 @@ export function AvailabilitySliderTable() {
     const cols: ColumnDef<SliderUser>[] = [
       {
         id: "member",
-        accessorFn: (data) => data.email,
+        accessorFn: (data) => data.username,
+        enableHiding: false,
+        enableSorting: false,
         header: "Member",
+        size: 200,
         cell: ({ row }) => {
-          const { username, email, timeZone, name, organizationId } = row.original;
+          const { username, email, timeZone, name, avatarUrl, profile } = row.original;
           return (
             <div className="max-w-64 flex flex-shrink-0 items-center gap-2 overflow-hidden">
               <UserAvatar
@@ -89,7 +108,8 @@ export function AvailabilitySliderTable() {
                 user={{
                   username,
                   name,
-                  organizationId,
+                  avatarUrl,
+                  profile,
                 }}
               />
               <div className="">
@@ -101,11 +121,17 @@ export function AvailabilitySliderTable() {
             </div>
           );
         },
+        filterFn: (row, id, value) => {
+          return row.original.username?.toLowerCase().includes(value.toLowerCase()) || false;
+        },
       },
       {
         id: "timezone",
         accessorFn: (data) => data.timeZone,
         header: "Timezone",
+        enableHiding: false,
+        enableSorting: false,
+        size: 160,
         cell: ({ row }) => {
           const { timeZone } = row.original;
           const timeRaw = dayjs().tz(timeZone);
@@ -127,24 +153,29 @@ export function AvailabilitySliderTable() {
       },
       {
         id: "slider",
+        meta: {
+          autoWidth: true,
+        },
+        enableHiding: false,
+        enableSorting: false,
         header: () => {
           return (
-            <div className="flex items-center">
+            <div className="flex items-center space-x-2">
               <ButtonGroup containerProps={{ className: "space-x-0" }}>
                 <Button
                   color="minimal"
                   variant="icon"
-                  StartIcon={ChevronLeftIcon}
+                  StartIcon="chevron-left"
                   onClick={() => setBrowsingDate(browsingDate.subtract(1, "day"))}
                 />
                 <Button
                   onClick={() => setBrowsingDate(browsingDate.add(1, "day"))}
                   color="minimal"
-                  StartIcon={ChevronRightIcon}
+                  StartIcon="chevron-right"
                   variant="icon"
                 />
               </ButtonGroup>
-              <span>{browsingDate.format("DD dddd MMM, YYYY")}</span>
+              <span>{browsingDate.format("LL")}</span>
             </div>
           );
         },
@@ -161,7 +192,7 @@ export function AvailabilitySliderTable() {
 
   //we must flatten the array of arrays from the useInfiniteQuery hook
   const flatData = useMemo(() => data?.pages?.flatMap((page) => page.rows) ?? [], [data]) as SliderUser[];
-  const totalDBRowCount = data?.pages?.[0]?.meta?.totalRowCount ?? 0;
+  const totalRowCount = data?.pages?.[0]?.meta?.totalRowCount ?? 0;
   const totalFetched = flatData.length;
 
   //called on scroll and possibly on mount to fetch more data as the user scrolls and reaches bottom of table
@@ -170,20 +201,27 @@ export function AvailabilitySliderTable() {
       if (containerRefElement) {
         const { scrollHeight, scrollTop, clientHeight } = containerRefElement;
         //once the user has scrolled within 300px of the bottom of the table, fetch more data if there is any
-        if (scrollHeight - scrollTop - clientHeight < 300 && !isFetching && totalFetched < totalDBRowCount) {
+        if (scrollHeight - scrollTop - clientHeight < 300 && !isFetching && totalFetched < totalRowCount) {
           fetchNextPage();
         }
       }
     },
-    [fetchNextPage, isFetching, totalFetched, totalDBRowCount]
+    [fetchNextPage, isFetching, totalFetched, totalRowCount]
   );
 
   useEffect(() => {
     fetchMoreOnBottomReached(tableContainerRef.current);
   }, [fetchMoreOnBottomReached]);
 
+  const table = useReactTable({
+    data: flatData,
+    columns: memorisedColumns,
+    getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+  });
+
   // This means they are not apart of any teams so we show the upgrade tip
-  if (!flatData.length) return <UpgradeTeamTip />;
+  if (!flatData.length && !data?.pages?.[0]?.meta?.isApartOfAnyTeam) return <UpgradeTeamTip />;
 
   return (
     <TBContext.Provider
@@ -191,20 +229,23 @@ export function AvailabilitySliderTable() {
         browsingDate: browsingDate.toDate(),
       })}>
       <>
-        <div className="relative">
+        <CellHighlightContainer>
           <DataTable
+            table={table}
             tableContainerRef={tableContainerRef}
-            columns={memorisedColumns}
             onRowMouseclick={(row) => {
-              setEditSheetOpen(true);
-              setSelectedUser(row.original);
+              if (props.isOrg) {
+                setEditSheetOpen(true);
+                setSelectedUser(row.original);
+              }
             }}
-            data={flatData}
-            isLoading={isLoading}
-            // tableOverlay={<HoverOverview />}
-            onScroll={(e) => fetchMoreOnBottomReached(e.target as HTMLDivElement)}
-          />
-        </div>
+            isPending={isPending}
+            onScroll={(e) => fetchMoreOnBottomReached(e.target as HTMLDivElement)}>
+            <DataTableToolbar.Root>
+              <DataTableToolbar.SearchBar table={table} onSearch={(value) => setSearchString(value)} />
+            </DataTableToolbar.Root>
+          </DataTable>
+        </CellHighlightContainer>
         {selectedUser && editSheetOpen ? (
           <AvailabilityEditSheet
             open={editSheetOpen}

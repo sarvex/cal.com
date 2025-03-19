@@ -3,7 +3,7 @@ import { prisma } from "@calcom/prisma";
 
 import { TRPCError } from "@trpc/server";
 
-import type { TrpcSessionUser } from "../../../trpc";
+import type { TrpcSessionUser } from "../../../types";
 import type { TVerifyPasswordInputSchema } from "./verifyPassword.schema";
 
 type VerifyPasswordOptions = {
@@ -14,17 +14,17 @@ type VerifyPasswordOptions = {
 };
 
 export const verifyPasswordHandler = async ({ input, ctx }: VerifyPasswordOptions) => {
-  const user = await prisma.user.findUnique({
+  const userPassword = await prisma.userPassword.findUnique({
     where: {
-      id: ctx.user.id,
+      userId: ctx.user.id,
     },
   });
 
-  if (!user?.password) {
+  if (!userPassword?.hash) {
     throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
   }
 
-  const passwordsMatch = await verifyPassword(input.passwordInput, user.password);
+  const passwordsMatch = await verifyPassword(input.passwordInput, userPassword.hash);
 
   if (!passwordsMatch) {
     throw new TRPCError({ code: "UNAUTHORIZED" });

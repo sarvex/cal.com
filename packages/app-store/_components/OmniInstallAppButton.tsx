@@ -1,9 +1,8 @@
-import { classNames } from "@calcom/lib";
 import useApp from "@calcom/lib/hooks/useApp";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
 import { Button, showToast } from "@calcom/ui";
-import { Plus } from "@calcom/ui/components/icon";
+import classNames from "@calcom/ui/classNames";
 
 import useAddAppMutation from "../_utils/useAddAppMutation";
 import { InstallAppButton } from "../components";
@@ -25,14 +24,13 @@ export default function OmniInstallAppButton({
 }) {
   const { t } = useLocale();
   const { data: app } = useApp(appId);
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
 
   const mutation = useAddAppMutation(null, {
     returnTo,
     onSuccess: (data) => {
-      //TODO: viewer.appById might be replaced with viewer.apps so that a single query needs to be invalidated.
-      utils.viewer.appById.invalidate({ appId });
-      utils.viewer.integrations.invalidate({
+      utils.viewer.apps.appById.invalidate({ appId });
+      utils.viewer.apps.integrations.invalidate({
         extendsFeature: "EventType",
         ...(teamId && { teamId }),
       });
@@ -62,7 +60,6 @@ export default function OmniInstallAppButton({
                 type: app.type,
                 variant: app.variant,
                 slug: app.slug,
-                isOmniInstall: true,
                 ...(teamId && { teamId }),
               });
             },
@@ -71,10 +68,10 @@ export default function OmniInstallAppButton({
 
         return (
           <Button
-            loading={mutation.isLoading}
+            loading={mutation.isPending}
             color="secondary"
             className="[@media(max-width:260px)]:w-full [@media(max-width:260px)]:justify-center"
-            StartIcon={Plus}
+            StartIcon="plus"
             {...props}>
             {t("add")}
           </Button>

@@ -1,16 +1,40 @@
-import type { ColumnDef } from "@tanstack/react-table";
-import { Plus } from "lucide-react";
+"use client";
+
+import { keepPreviousData } from "@tanstack/react-query";
+import { getCoreRowModel, getSortedRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
 import { useSession } from "next-auth/react";
-import { useMemo, useRef, useCallback, useEffect, useReducer } from "react";
+import { useQueryState, parseAsBoolean } from "nuqs";
+import { useMemo, useReducer, useState } from "react";
 
+import {
+  DataTableWrapper,
+  DataTableProvider,
+  DataTableToolbar,
+  DataTableSelectionBar,
+  DataTableFilters,
+  useColumnFilters,
+  ColumnFilterType,
+  convertFacetedValuesToMap,
+  useDataTable,
+} from "@calcom/features/data-table";
+import { useOrgBranding } from "@calcom/features/ee/organizations/context/provider";
 import { WEBAPP_URL } from "@calcom/lib/constants";
+import {
+  downloadAsCsv,
+  generateCsvRawForMembersTable,
+  generateHeaderFromReactTable,
+} from "@calcom/lib/csvUtils";
+import { getUserAvatarUrl } from "@calcom/lib/getAvatarUrl";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import type { MembershipRole } from "@calcom/prisma/enums";
 import { trpc } from "@calcom/trpc";
-import { Avatar, Badge, Button, DataTable, Checkbox } from "@calcom/ui";
+import { Avatar, Badge, Checkbox, showToast } from "@calcom/ui";
+import classNames from "@calcom/ui/classNames";
+import { useGetUserAttributes } from "@calcom/web/components/settings/platform/hooks/useGetUserAttributes";
 
-import { useOrgBranding } from "../../../ee/organizations/context/provider";
 import { DeleteBulkUsers } from "./BulkActions/DeleteBulkUsers";
+import { DynamicLink } from "./BulkActions/DynamicLink";
+import { EventTypesList } from "./BulkActions/EventTypesList";
+import { MassAssignAttributesBulkAction } from "./BulkActions/MassAssignAttributes";
 import { TeamListBulkAction } from "./BulkActions/TeamList";
 import { ChangeUserRoleModal } from "./ChangeUserRoleModal";
 import { DeleteMemberModal } from "./DeleteMemberModal";
@@ -18,51 +42,9 @@ import { EditUserSheet } from "./EditSheet/EditUserSheet";
 import { ImpersonationMemberModal } from "./ImpersonationMemberModal";
 import { InviteMemberModal } from "./InviteMemberModal";
 import { TableActions } from "./UserTableActions";
+import type { UserTableState, UserTableAction, UserTableUser } from "./types";
 
-export interface User {
-  id: number;
-  username: string | null;
-  email: string;
-  timeZone: string;
-  role: MembershipRole;
-  accepted: boolean;
-  disableImpersonation: boolean;
-  completedOnboarding: boolean;
-  teams: {
-    id: number;
-    name: string;
-    slug: string | null;
-  }[];
-}
-
-type Payload = {
-  showModal: boolean;
-  user?: User;
-};
-
-export type State = {
-  changeMemberRole: Payload;
-  deleteMember: Payload;
-  impersonateMember: Payload;
-  inviteMember: Payload;
-  editSheet: Payload;
-};
-
-export type Action =
-  | {
-      type:
-        | "SET_CHANGE_MEMBER_ROLE_ID"
-        | "SET_DELETE_ID"
-        | "SET_IMPERSONATE_ID"
-        | "INVITE_MEMBER"
-        | "EDIT_USER_SHEET";
-      payload: Payload;
-    }
-  | {
-      type: "CLOSE_MODAL";
-    };
-
-const initialState: State = {
+const initialState: UserTableState = {
   changeMemberRole: {
     showModal: false,
   },
@@ -80,7 +62,15 @@ const initialState: State = {
   },
 };
 
-function reducer(state: State, action: Action): State {
+const initalColumnVisibility = {
+  select: true,
+  member: true,
+  role: true,
+  teams: true,
+  actions: true,
+};
+
+function reducer(state: UserTableState, action: UserTableAction): UserTableState {
   switch (action.type) {
     case "SET_CHANGE_MEMBER_ROLE_ID":
       return { ...state, changeMemberRole: action.payload };
@@ -107,26 +97,65 @@ function reducer(state: State, action: Action): State {
 }
 
 export function UserListTable() {
-  const { data: session } = useSession();
-  const { data: currentMembership } = trpc.viewer.organizations.listCurrent.useQuery();
-  const tableContainerRef = useRef<HTMLDivElement>(null);
-  const [state, dispatch] = useReducer(reducer, initialState);
-  const { t } = useLocale();
+  return (
+    <DataTableProvider defaultPageSize={25}>
+      <UserListTableContent />
+    </DataTableProvider>
+  );
+}
+
+function UserListTableContent() {
+  const [dynamicLinkVisible, setDynamicLinkVisible] = useQueryState("dynamicLink", parseAsBoolean);
   const orgBranding = useOrgBranding();
-
-  const { data, isLoading, fetchNextPage, isFetching } =
-    trpc.viewer.organizations.listMembers.useInfiniteQuery(
-      {
-        limit: 10,
-      },
-      {
-        getNextPageParam: (lastPage) => lastPage.nextCursor,
-        keepPreviousData: true,
-      }
-    );
-
-  const adminOrOwner = currentMembership?.user.role === "ADMIN" || currentMembership?.user.role === "OWNER";
   const domain = orgBranding?.fullDomain ?? WEBAPP_URL;
+  const { t } = useLocale();
+
+  const { data: session } = useSession();
+  const { isPlatformUser } = useGetUserAttributes();
+  const { data: org } = trpc.viewer.organizations.listCurrent.useQuery(undefined, {
+    refetchOnWindowFocus: false,
+  });
+  const { data: attributes, isSuccess: isSuccessAttributes } = trpc.viewer.attributes.list.useQuery(
+    undefined,
+    {
+      refetchOnWindowFocus: false,
+    }
+  );
+  const { data: teams } = trpc.viewer.organizations.getTeams.useQuery(undefined, {
+    refetchOnWindowFocus: false,
+  });
+  const { data: facetedTeamValues } = trpc.viewer.organizations.getFacetedValues.useQuery(undefined, {
+    refetchOnWindowFocus: false,
+  });
+
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [rowSelection, setRowSelection] = useState({});
+
+  const columnFilters = useColumnFilters();
+
+  const { limit, offset } = useDataTable();
+
+  const { data, isPending } = trpc.viewer.organizations.listMembers.useQuery(
+    {
+      limit,
+      offset,
+      searchTerm: debouncedSearchTerm,
+      expand: ["attributes"],
+      filters: columnFilters,
+    },
+    {
+      placeholderData: keepPreviousData,
+    }
+  );
+
+  // TODO (SEAN): Make Column filters a trpc query param so we can fetch serverside even if the data is not loaded
+  const totalRowCount = data?.meta?.totalRowCount ?? 0;
+  const adminOrOwner = org?.user.role === "ADMIN" || org?.user.role === "OWNER";
+
+  //we must flatten the array of arrays from the useInfiniteQuery hook
+  const flatData = useMemo<UserTableUser[]>(() => data?.rows ?? [], [data]);
 
   const memorisedColumns = useMemo(() => {
     const permissions = {
@@ -135,10 +164,86 @@ export function UserListTable() {
       canResendInvitation: adminOrOwner,
       canImpersonate: false,
     };
-    const cols: ColumnDef<User>[] = [
+    const generateAttributeColumns = () => {
+      if (!attributes?.length) {
+        return [];
+      }
+      const attributeColumns: ColumnDef<UserTableUser>[] =
+        attributes?.map((attribute) => {
+          // TODO: We need to normalize AttributeOption table first
+          // so that we can have `number_value` column for numeric operations.
+          // Currently, `value` column is used for both text and number attributes.
+          //
+          // const isNumber = attribute.type === "NUMBER";
+          const isNumber = false;
+          const isText = attribute.type === "TEXT";
+          const isSingleSelect = attribute.type === "SINGLE_SELECT";
+          // const isMultiSelect = attribute.type === "MULTI_SELECT";
+          const filterType = isNumber
+            ? ColumnFilterType.NUMBER
+            : isText
+            ? ColumnFilterType.TEXT
+            : isSingleSelect
+            ? ColumnFilterType.SINGLE_SELECT
+            : ColumnFilterType.MULTI_SELECT;
+
+          return {
+            id: attribute.id,
+            header: attribute.name,
+            meta: {
+              filter: { type: filterType },
+            },
+            size: 120,
+            accessorFn: (data) => data.attributes?.find((attr) => attr.attributeId === attribute.id)?.value,
+            cell: ({ row }) => {
+              const attributeValues = row.original.attributes?.filter(
+                (attr) => attr.attributeId === attribute.id
+              );
+              if (attributeValues?.length === 0) return null;
+              return (
+                <div className={classNames(isNumber ? "flex w-full justify-center" : "flex flex-wrap")}>
+                  {attributeValues?.map((attributeValue) => {
+                    const isAGroupOption = attributeValue.contains?.length > 0;
+                    const suffix = attribute.isWeightsEnabled
+                      ? `${attributeValue.weight || 100}%`
+                      : undefined;
+                    return (
+                      <div className="mr-1 inline-flex shrink-0" key={attributeValue.id}>
+                        <Badge
+                          variant={isAGroupOption ? "orange" : "gray"}
+                          className={classNames(suffix && "rounded-r-none")}>
+                          {attributeValue.value}
+                        </Badge>
+
+                        {suffix ? (
+                          <Badge
+                            variant={isAGroupOption ? "orange" : "gray"}
+                            style={{
+                              backgroundColor: "color-mix(in hsl, var(--cal-bg-emphasis), black 5%)",
+                            }}
+                            className="rounded-l-none">
+                            {suffix}
+                          </Badge>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            },
+          };
+        }) ?? [];
+      return attributeColumns;
+    };
+
+    const cols: ColumnDef<UserTableUser>[] = [
       // Disabling select for this PR: Will work on actions etc in a follow up
       {
         id: "select",
+        enableHiding: false,
+        enableSorting: false,
+        enableResizing: false,
+        size: 30,
         header: ({ table }) => (
           <Checkbox
             checked={table.getIsAllPageRowsSelected()}
@@ -159,35 +264,47 @@ export function UserListTable() {
       {
         id: "member",
         accessorFn: (data) => data.email,
-        header: "Member",
+        enableHiding: false,
+        enableColumnFilter: false,
+        size: 200,
+        header: "Members",
         cell: ({ row }) => {
-          const { username, email } = row.original;
+          const { username, email, avatarUrl } = row.original;
           return (
             <div className="flex items-center gap-2">
-              <Avatar size="sm" alt={username || email} imageSrc={`${domain}/${username}/avatar.png`} />
+              <Avatar
+                size="sm"
+                alt={username || email}
+                imageSrc={getUserAvatarUrl({
+                  avatarUrl,
+                })}
+              />
               <div className="">
-                <div className="text-emphasis text-sm font-medium leading-none">
+                <div
+                  data-testid={`member-${username}-username`}
+                  className="text-emphasis text-sm font-medium leading-none">
                   {username || "No username"}
                 </div>
-                <div className="text-subtle mt-1 text-sm leading-none">{email}</div>
+                <div
+                  data-testid={`member-${username}-email`}
+                  className="text-subtle mt-1 text-sm leading-none">
+                  {email}
+                </div>
               </div>
             </div>
           );
-        },
-        filterFn: (rows, id, filterValue) => {
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-ignore Weird typing issue
-          return rows.getValue(id).includes(filterValue);
         },
       },
       {
         id: "role",
         accessorFn: (data) => data.role,
         header: "Role",
+        size: 100,
         cell: ({ row, table }) => {
-          const { role } = row.original;
+          const { role, username } = row.original;
           return (
             <Badge
+              data-testid={`member-${username}-role`}
               variant={role === "MEMBER" ? "gray" : "blue"}
               onClick={() => {
                 table.getColumn("role")?.setFilterValue([role]);
@@ -196,25 +313,37 @@ export function UserListTable() {
             </Badge>
           );
         },
-        filterFn: (rows, id, filterValue) => {
-          return filterValue.includes(rows.getValue(id));
-        },
       },
       {
         id: "teams",
+        accessorFn: (data) => data.teams.map((team) => team.name),
         header: "Teams",
-        cell: ({ row }) => {
-          const { teams, accepted } = row.original;
+        size: 140,
+        cell: ({ row, table }) => {
+          const { teams, accepted, email, username } = row.original;
           // TODO: Implement click to filter
           return (
             <div className="flex h-full flex-wrap items-center gap-2">
               {accepted ? null : (
-                <Badge variant="red" className="text-xs">
+                <Badge
+                  data-testid2={`member-${username}-pending`}
+                  variant="red"
+                  className="text-xs"
+                  data-testid={`email-${email.replace("@", "")}-pending`}
+                  onClick={() => {
+                    table.getColumn("role")?.setFilterValue(["PENDING"]);
+                  }}>
                   Pending
                 </Badge>
               )}
+
               {teams.map((team) => (
-                <Badge key={team.id} variant="gray">
+                <Badge
+                  key={team.id}
+                  variant="gray"
+                  onClick={() => {
+                    table.getColumn("teams")?.setFilterValue([team.name]);
+                  }}>
                   {team.name}
                 </Badge>
               ))}
@@ -222,8 +351,18 @@ export function UserListTable() {
           );
         },
       },
+      ...generateAttributeColumns(),
+      {
+        id: "lastActiveAt",
+        header: "Last Active",
+        cell: ({ row }) => <div>{row.original.lastActiveAt}</div>,
+      },
       {
         id: "actions",
+        enableHiding: false,
+        enableSorting: false,
+        enableResizing: false,
+        size: 80,
         cell: ({ row }) => {
           const user = row.original;
           const permissionsRaw = permissions;
@@ -232,7 +371,8 @@ export function UserListTable() {
           const permissionsForUser = {
             canEdit: permissionsRaw.canEdit && user.accepted && !isSelf,
             canRemove: permissionsRaw.canRemove && !isSelf,
-            canImpersonate: user.accepted && !user.disableImpersonation && !isSelf,
+            canImpersonate:
+              user.accepted && !user.disableImpersonation && !isSelf && !!org?.canAdminImpersonate,
             canLeave: user.accepted && isSelf,
             canResendInvitation: permissionsRaw.canResendInvitation && !user.accepted,
           };
@@ -250,85 +390,210 @@ export function UserListTable() {
     ];
 
     return cols;
-  }, [session?.user.id, adminOrOwner, dispatch, domain]);
+  }, [session?.user.id, adminOrOwner, dispatch, domain, attributes, org?.canAdminImpersonate]);
 
-  //we must flatten the array of arrays from the useInfiniteQuery hook
-  const flatData = useMemo(() => data?.pages?.flatMap((page) => page.rows) ?? [], [data]) as User[];
-  const totalDBRowCount = data?.pages?.[0]?.meta?.totalRowCount ?? 0;
-  const totalFetched = flatData.length;
-
-  //called on scroll and possibly on mount to fetch more data as the user scrolls and reaches bottom of table
-  const fetchMoreOnBottomReached = useCallback(
-    (containerRefElement?: HTMLDivElement | null) => {
-      if (containerRefElement) {
-        const { scrollHeight, scrollTop, clientHeight } = containerRefElement;
-        //once the user has scrolled within 300px of the bottom of the table, fetch more data if there is any
-        if (scrollHeight - scrollTop - clientHeight < 300 && !isFetching && totalFetched < totalDBRowCount) {
-          fetchNextPage();
+  const table = useReactTable({
+    data: flatData,
+    columns: memorisedColumns,
+    enableRowSelection: true,
+    manualPagination: true,
+    state: {
+      rowSelection,
+    },
+    initialState: {
+      columnVisibility: initalColumnVisibility,
+      columnPinning: {
+        left: ["select", "member"],
+        right: ["actions"],
+      },
+    },
+    defaultColumn: {
+      size: 150,
+    },
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    onRowSelectionChange: setRowSelection,
+    getRowId: (row) => `${row.id}`,
+    getFacetedUniqueValues: (_, columnId) => () => {
+      if (facetedTeamValues) {
+        switch (columnId) {
+          case "role":
+            return convertFacetedValuesToMap(
+              facetedTeamValues.roles.map((role) => ({
+                label: role,
+                value: role,
+              }))
+            );
+          case "teams":
+            return convertFacetedValuesToMap(
+              facetedTeamValues.teams.map((team) => ({
+                label: team.name,
+                value: team.name,
+              }))
+            );
+          default:
+            const attribute = facetedTeamValues.attributes.find((attr) => attr.id === columnId);
+            if (attribute) {
+              return convertFacetedValuesToMap(
+                attribute?.options.map(({ value }) => ({
+                  label: value,
+                  value,
+                })) ?? []
+              );
+            }
+            return new Map();
         }
       }
+      return new Map();
     },
-    [fetchNextPage, isFetching, totalFetched, totalDBRowCount]
-  );
+  });
 
-  useEffect(() => {
-    fetchMoreOnBottomReached(tableContainerRef.current);
-  }, [fetchMoreOnBottomReached]);
+  const utils = trpc.useUtils();
+
+  const numberOfSelectedRows = table.getSelectedRowModel().rows.length;
+
+  const handleDownload = async () => {
+    try {
+      if (!org?.slug || !org?.name) {
+        throw new Error("Org slug or name is missing.");
+      }
+      setIsDownloading(true);
+      const headers = generateHeaderFromReactTable(table);
+      if (!headers || !headers.length) {
+        throw new Error("Header is missing.");
+      }
+
+      // Fetch all pages
+      let allRows: UserTableUser[] = [];
+      let offset: number | undefined = 0;
+      const limit = 100;
+
+      while (offset !== undefined) {
+        const result = await utils.viewer.organizations.listMembers.fetch({
+          limit,
+          offset,
+          searchTerm: debouncedSearchTerm,
+          expand: ["attributes"],
+          filters: columnFilters,
+        });
+
+        if (!result.rows?.length) {
+          offset = undefined;
+          continue;
+        }
+
+        allRows = [...allRows, ...result.rows];
+        offset = offset + limit;
+      }
+
+      if (!allRows.length) {
+        throw new Error("There are no members found.");
+      }
+
+      const ATTRIBUTE_IDS = attributes?.map((attr) => attr.id) ?? [];
+      const csvRaw = generateCsvRawForMembersTable(headers, allRows, ATTRIBUTE_IDS, domain);
+      if (!csvRaw) {
+        throw new Error("Generating CSV file failed.");
+      }
+
+      const filename = `${org.name}_${new Date().toISOString().split("T")[0]}.csv`;
+      downloadAsCsv(csvRaw, filename);
+    } catch (error) {
+      showToast(`Error: ${error}`, "error");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  if (!isPlatformUser && !isSuccessAttributes) {
+    // do not render the table until the attributes are fetched
+    return null;
+  }
 
   return (
     <>
-      <DataTable
-        searchKey="member"
-        selectionOptions={[
-          {
-            type: "render",
-            render: (table) => <TeamListBulkAction table={table} />,
-          },
-          {
-            type: "render",
-            render: (table) => (
-              <DeleteBulkUsers users={table.getSelectedRowModel().flatRows.map((row) => row.original)} />
-            ),
-          },
-        ]}
-        tableContainerRef={tableContainerRef}
-        tableCTA={
-          adminOrOwner && (
-            <Button
-              type="button"
-              color="primary"
-              StartIcon={Plus}
-              size="sm"
-              className="rounded-md"
-              onClick={() =>
-                dispatch({
-                  type: "INVITE_MEMBER",
-                  payload: {
-                    showModal: true,
-                  },
-                })
-              }
-              data-testid="new-organization-member-button">
-              {t("add")}
-            </Button>
-          )
+      <DataTableWrapper<UserTableUser>
+        testId="user-list-data-table"
+        table={table}
+        isPending={isPending}
+        totalRowCount={data?.meta?.totalRowCount}
+        paginationMode="standard"
+        ToolbarLeft={
+          <>
+            <DataTableToolbar.SearchBar table={table} onSearch={(value) => setDebouncedSearchTerm(value)} />
+            <DataTableFilters.AddFilterButton table={table} hideWhenFilterApplied />
+            <DataTableFilters.ActiveFilters table={table} />
+            <DataTableFilters.AddFilterButton table={table} variant="sm" showWhenFilterApplied />
+            <DataTableFilters.ClearFiltersButton />
+          </>
         }
-        columns={memorisedColumns}
-        data={flatData}
-        isLoading={isLoading}
-        onScroll={(e) => fetchMoreOnBottomReached(e.target as HTMLDivElement)}
-        filterableItems={[
-          {
-            tableAccessor: "role",
-            title: "Role",
-            options: [
-              { label: "Owner", value: "OWNER" },
-              { label: "Admin", value: "ADMIN" },
-              { label: "Member", value: "MEMBER" },
-            ],
-          },
-        ]}
-      />
+        ToolbarRight={
+          <>
+            <DataTableToolbar.CTA
+              type="button"
+              color="secondary"
+              StartIcon="file-down"
+              loading={isDownloading}
+              onClick={() => handleDownload()}
+              data-testid="export-members-button">
+              {t("download")}
+            </DataTableToolbar.CTA>
+            <DataTableFilters.ColumnVisibilityButton table={table} />
+            {adminOrOwner && (
+              <DataTableToolbar.CTA
+                type="button"
+                color="primary"
+                StartIcon="plus"
+                onClick={() =>
+                  dispatch({
+                    type: "INVITE_MEMBER",
+                    payload: {
+                      showModal: true,
+                    },
+                  })
+                }
+                data-testid="new-organization-member-button">
+                {t("add")}
+              </DataTableToolbar.CTA>
+            )}
+          </>
+        }>
+        {numberOfSelectedRows >= 2 && dynamicLinkVisible && (
+          <DataTableSelectionBar.Root className="!bottom-16 md:!bottom-20">
+            <DynamicLink table={table} domain={domain} />
+          </DataTableSelectionBar.Root>
+        )}
+        {numberOfSelectedRows > 0 && (
+          <DataTableSelectionBar.Root
+            className="justify-center"
+            style={{
+              width: "max-content",
+            }}>
+            <p className="text-brand-subtle shrink-0 px-2 text-center text-xs leading-none sm:text-sm sm:font-medium">
+              {t("number_selected", { count: numberOfSelectedRows })}
+            </p>
+            {!isPlatformUser ? (
+              <>
+                <TeamListBulkAction table={table} />
+                {numberOfSelectedRows >= 2 && (
+                  <DataTableSelectionBar.Button
+                    color="secondary"
+                    onClick={() => setDynamicLinkVisible(!dynamicLinkVisible)}
+                    icon="handshake">
+                    {t("group_meeting")}
+                  </DataTableSelectionBar.Button>
+                )}
+                <MassAssignAttributesBulkAction table={table} filters={columnFilters} />
+                <EventTypesList table={table} orgTeams={teams} />
+              </>
+            ) : null}
+            <DeleteBulkUsers
+              users={table.getSelectedRowModel().flatRows.map((row) => row.original)}
+              onRemove={() => table.toggleAllPageRowsSelected(false)}
+            />
+          </DataTableSelectionBar.Root>
+        )}
+      </DataTableWrapper>
 
       {state.deleteMember.showModal && <DeleteMemberModal state={state} dispatch={dispatch} />}
       {state.inviteMember.showModal && <InviteMemberModal dispatch={dispatch} />}

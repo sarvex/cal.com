@@ -1,24 +1,21 @@
-import { WEBAPP_URL } from "@calcom/lib/constants";
-import { AVATAR_FALLBACK } from "@calcom/lib/constants";
-import type { User, Team } from "@calcom/prisma/client";
+import { z } from "zod";
+
+import { AVATAR_FALLBACK, CAL_URL } from "@calcom/lib/constants";
+import type { User } from "@calcom/prisma/client";
 
 /**
  * Gives an organization aware avatar url for a user
  * It ensures that the wrong avatar isn't fetched by ensuring that organizationId is always passed
+ * It should always return a fully formed url
  */
-export const getUserAvatarUrl = (user: Pick<User, "username" | "organizationId">) => {
-  if (!user.username) return AVATAR_FALLBACK;
-  // avatar.png automatically redirects to fallback avatar if user doesn't have one
-  return `${WEBAPP_URL}/${user.username}/avatar.png${
-    user.organizationId ? `?orgId=${user.organizationId}` : ""
-  }`;
-};
-
-export const getOrgAvatarUrl = (org: {
-  id: Team["id"];
-  slug: Team["slug"];
-  requestedSlug: string | null;
-}) => {
-  const slug = org.slug ?? org.requestedSlug;
-  return `${WEBAPP_URL}/org/${slug}/avatar.png`;
+export const getUserAvatarUrl = (user: Pick<User, "avatarUrl"> | undefined) => {
+  if (user?.avatarUrl) {
+    const isAbsoluteUrl = z.string().url().safeParse(user.avatarUrl).success;
+    if (isAbsoluteUrl) {
+      return user.avatarUrl;
+    } else {
+      return CAL_URL + user.avatarUrl;
+    }
+  }
+  return CAL_URL + AVATAR_FALLBACK;
 };

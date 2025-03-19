@@ -1,7 +1,8 @@
+import { safeStringify } from "@calcom/lib/safeStringify";
 import { prisma } from "@calcom/prisma";
 import { teamMetadataSchema } from "@calcom/prisma/zod-utils";
 
-import type { TrpcSessionUser } from "../../../trpc";
+import type { TrpcSessionUser } from "../../../types";
 
 type AdminGetAllOptions = {
   ctx: {
@@ -12,20 +13,14 @@ type AdminGetAllOptions = {
 export const adminGetUnverifiedHandler = async ({}: AdminGetAllOptions) => {
   const allOrgs = await prisma.team.findMany({
     where: {
-      AND: [
-        {
-          metadata: {
-            path: ["isOrganization"],
-            equals: true,
-          },
-        },
-      ],
+      isOrganization: true,
     },
     select: {
       id: true,
       name: true,
       slug: true,
       metadata: true,
+      organizationSettings: true,
       members: {
         where: {
           role: "OWNER",
@@ -43,7 +38,16 @@ export const adminGetUnverifiedHandler = async ({}: AdminGetAllOptions) => {
     },
   });
 
-  return allOrgs.map((org) => ({ ...org, metadata: teamMetadataSchema.parse(org.metadata) }));
+  return allOrgs
+    .map((org) => {
+      const parsed = teamMetadataSchema.safeParse(org.metadata);
+      if (!parsed.success) {
+        console.error(`Failed to parse metadata for org ${org.id}:`, safeStringify(parsed.error));
+        return null;
+      }
+      return { ...org, metadata: parsed.data };
+    })
+    .filter((org): org is NonNullable<typeof org> => org !== null);
 };
 
 export default adminGetUnverifiedHandler;

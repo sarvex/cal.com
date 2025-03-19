@@ -1,7 +1,7 @@
-import getEventTypeById from "@calcom/lib/getEventTypeById";
+import getEventTypeById from "@calcom/lib/event-types/getEventTypeById";
 import type { PrismaClient } from "@calcom/prisma";
 
-import type { TrpcSessionUser } from "../../../trpc";
+import type { TrpcSessionUser } from "../../../types";
 import type { TGetInputSchema } from "./get.schema";
 
 type GetOptions = {
@@ -14,6 +14,7 @@ type GetOptions = {
 
 export const getHandler = ({ ctx, input }: GetOptions) => {
   return getEventTypeById({
+    currentOrganizationId: ctx.user.profile?.organizationId ?? null,
     eventTypeId: input.id,
     userId: ctx.user.id,
     prisma: ctx.prisma,

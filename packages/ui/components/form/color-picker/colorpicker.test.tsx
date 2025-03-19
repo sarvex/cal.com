@@ -1,14 +1,22 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { act } from "react-dom/test-utils";
 import { vi } from "vitest";
 
 import type { ButtonProps } from "../../button";
-import { Button } from "../../button";
 import ColorPicker from "./colorpicker";
 
-vi.mock("@calcom/ui", async () => {
-  return { Button: ({ tooltip, ...rest }: ButtonProps) => <Button {...rest}>{tooltip}</Button> };
+vi.mock("../../button/Button", async () => {
+  const ButtonMock = (await import("../../button/Button")).Button;
+  return {
+    Button: ({ tooltip, ...rest }: ButtonProps) => <ButtonMock {...rest}>{tooltip}</ButtonMock>,
+  };
+});
+
+vi.mock("../icon/Icon", async () => {
+  return {
+    Icon: () => <svg data-testid="dummy-icon" />,
+  };
 });
 
 describe("Tests for ColorPicker component", () => {
@@ -46,14 +54,9 @@ describe("Tests for ColorPicker component", () => {
     render(<ColorPicker defaultValue={defaultValue} onChange={onChange} />);
 
     const colorInput = screen.getByRole("textbox");
-    await act(async () => {
-      userEvent.clear(colorInput);
-    });
+    await act(async () => userEvent.clear(colorInput));
     const newColorValue = "#00FF00";
-    await act(async () => {
-      userEvent.type(colorInput, newColorValue);
-    });
-
+    await act(async () => await userEvent.type(colorInput, newColorValue));
     expect(screen.getByRole("button", { name: "pick colors" })).toHaveStyle(
       `background-color: ${newColorValue}`
     );

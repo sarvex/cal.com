@@ -8,21 +8,25 @@ describe("getValidRhfFieldName", () => {
     expect(getValidRhfFieldName("HELLO")).toEqual("HELLO");
   });
 
-  it("should convert spaces, _, and any other special character to -", () => {
+  it("should convert spaces and any other special character to -", () => {
     expect(getValidRhfFieldName("hello there")).toEqual("hello-there");
-    expect(getValidRhfFieldName("hello_there")).toEqual("hello-there");
     expect(getValidRhfFieldName("hello$there")).toEqual("hello-there");
     expect(getValidRhfFieldName("$hello$there")).toEqual("-hello-there");
     expect(getValidRhfFieldName("$hello.there")).toEqual("-hello-there");
   });
 
-  // So that user can freely add spaces and any other character iteratively and it get's converted to - and he can add more characters.
+  // So that user can freely add spaces and any other character iteratively and it gets converted to - and he can add more characters.
   // We don't really care about a hyphen in the end
   it("should not remove dashes from start and end.", () => {
     expect(getValidRhfFieldName("hello-there-")).toEqual("hello-there-");
-    expect(getValidRhfFieldName("hello-there_")).toEqual("hello-there-");
-    expect(getValidRhfFieldName("_hello-there_")).toEqual("-hello-there-");
-    expect(getValidRhfFieldName("$hello-there_")).toEqual("-hello-there-");
+    expect(getValidRhfFieldName("-hello-there")).toEqual("-hello-there");
+    expect(getValidRhfFieldName("$hello-there-")).toEqual("-hello-there-");
+  });
+
+  it("should not remove underscore from start and end.", () => {
+    expect(getValidRhfFieldName("hello-there_")).toEqual("hello-there_");
+    expect(getValidRhfFieldName("_hello-there_")).toEqual("_hello-there_");
+    expect(getValidRhfFieldName("$hello-there_")).toEqual("-hello-there_");
   });
 
   it("should remove unicode and emoji characters", () => {

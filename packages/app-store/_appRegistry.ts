@@ -1,14 +1,20 @@
 import { appStoreMetadata } from "@calcom/app-store/appStoreMetaData";
 import { getAppFromSlug } from "@calcom/app-store/utils";
-import type { UserAdminTeams } from "@calcom/features/ee/teams/lib/getUserAdminTeams";
 import getInstallCountPerApp from "@calcom/lib/apps/getInstallCountPerApp";
+import { getAllDelegationCredentialsForUser } from "@calcom/lib/delegationCredential/server";
+import type { UserAdminTeams } from "@calcom/lib/server/repository/user";
 import prisma, { safeAppSelect, safeCredentialSelect } from "@calcom/prisma";
 import { userMetadata } from "@calcom/prisma/zod-utils";
 import type { AppFrontendPayload as App } from "@calcom/types/App";
 import type { CredentialFrontendPayload as Credential } from "@calcom/types/Credential";
 
+export type TDependencyData = {
+  name?: string;
+  installed?: boolean;
+}[];
+
 /**
- * Get App metdata either using dirName or slug
+ * Get App metadata either using dirName or slug
  */
 export async function getAppWithMetadata(app: { dirName: string } | { slug: string }) {
   let appMetadata: App | null;
@@ -58,19 +64,13 @@ export async function getAppRegistry() {
 
 export async function getAppRegistryWithCredentials(userId: number, userAdminTeams: UserAdminTeams = []) {
   // Get teamIds to grab existing credentials
-  const teamIds = [];
-  for (const team of userAdminTeams) {
-    if (!team.isUser) {
-      teamIds.push(team.id);
-    }
-  }
 
   const dbApps = await prisma.app.findMany({
     where: { enabled: true },
     select: {
       ...safeAppSelect,
       credentials: {
-        where: { OR: [{ userId }, { teamId: { in: teamIds } }] },
+        where: { OR: [{ userId }, { teamId: { in: userAdminTeams } }] },
         select: safeCredentialSelect,
       },
     },
@@ -80,14 +80,21 @@ export async function getAppRegistryWithCredentials(userId: number, userAdminTea
       },
     },
   });
+
   const user = await prisma.user.findUnique({
     where: {
       id: userId,
     },
     select: {
+      email: true,
+      id: true,
       metadata: true,
     },
   });
+
+  const delegationCredentials = user
+    ? await getAllDelegationCredentialsForUser({ user: { id: userId, email: user.email } })
+    : [];
 
   const usersDefaultApp = userMetadata.parse(user?.metadata)?.defaultConferencingApp?.appSlug;
   const apps = [] as (App & {
@@ -96,16 +103,18 @@ export async function getAppRegistryWithCredentials(userId: number, userAdminTea
   })[];
   const installCountPerApp = await getInstallCountPerApp();
   for await (const dbapp of dbApps) {
+    const delegationCredentialsForApp = delegationCredentials.filter(
+      (credential) => credential.appId === dbapp.slug
+    );
+    const nonDelegationCredentialsForApp = dbapp.credentials;
+    const allCredentials = [...delegationCredentialsForApp, ...nonDelegationCredentialsForApp];
     const app = await getAppWithMetadata(dbapp);
     if (!app) continue;
     // Skip if app isn't installed
     /* This is now handled from the DB */
     // if (!app.installed) return apps;
     app.createdAt = dbapp.createdAt.toISOString();
-    let dependencyData: {
-      name?: string;
-      installed?: boolean;
-    }[] = [];
+    let dependencyData: TDependencyData = [];
     if (app.dependencies) {
       dependencyData = app.dependencies.map((dependency) => {
         const dependencyInstalled = dbApps.some(
@@ -120,7 +129,7 @@ export async function getAppRegistryWithCredentials(userId: number, userAdminTea
     apps.push({
       ...app,
       categories: dbapp.categories,
-      credentials: dbapp.credentials,
+      credentials: allCredentials,
       installed: true,
       installCount: installCountPerApp[dbapp.slug] || 0,
       isDefault: usersDefaultApp === dbapp.slug,

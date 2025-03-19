@@ -4,6 +4,12 @@ import { vi } from "vitest";
 
 import WizardForm from "./WizardForm";
 
+vi.mock("@calcom/lib/hooks/useCompatSearchParams", () => ({
+  useCompatSearchParams() {
+    return { get: vi.fn().mockReturnValue(currentStepNavigation) };
+  },
+}));
+
 vi.mock("next/navigation", () => ({
   useRouter() {
     return { replace: vi.fn() };
@@ -23,8 +29,8 @@ const steps = [
   {
     title: "Step 2",
     description: "Description 2",
-    content: (setIsLoading: (value: boolean) => void) => (
-      <button data-testid="content-2" onClick={() => setIsLoading(true)}>
+    content: (setIsPending: (value: boolean) => void) => (
+      <button data-testid="content-2" onClick={() => setIsPending(true)}>
         Test
       </button>
     ),
@@ -112,9 +118,10 @@ describe("Tests for WizardForm component", () => {
   test("Should disable 'Next step' button if current step navigation is not enabled", async () => {
     currentStepNavigation = 1;
     const { nextLabel } = props;
-    const { getByText } = renderComponent();
+    const { getByRole } = renderComponent();
 
-    expect(getByText(nextLabel)).toBeDisabled();
+    const nextButton = getByRole("button", { name: nextLabel });
+    expect(nextButton).toBeDisabled();
   });
 
   test("Should handle when navigation is disabled", async () => {

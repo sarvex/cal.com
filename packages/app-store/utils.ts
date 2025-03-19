@@ -8,11 +8,11 @@ import logger from "@calcom/lib/logger";
 import { getPiiFreeCredential } from "@calcom/lib/piiFreeData";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import type { App, AppMeta } from "@calcom/types/App";
-import type { CredentialPayload } from "@calcom/types/Credential";
+import type { CredentialForCalendarService } from "@calcom/types/Credential";
 
 export * from "./_utils/getEventTypeAppData";
 
-type LocationOption = {
+export type LocationOption = {
   label: string;
   value: EventLocationType["type"];
   icon?: string;
@@ -33,7 +33,7 @@ const ALL_APPS_MAP = Object.keys(appStoreMetadata).reduce((store, key) => {
   return store;
 }, {} as Record<string, AppMeta>);
 
-export type CredentialDataWithTeamName = CredentialPayload & {
+export type CredentialDataWithTeamName = CredentialForCalendarService & {
   team?: {
     name: string;
   } | null;
@@ -47,7 +47,7 @@ export const ALL_APPS = Object.values(ALL_APPS_MAP);
  */
 function getApps(credentials: CredentialDataWithTeamName[], filterOnCredentials?: boolean) {
   const apps = ALL_APPS.reduce((reducedArray, appMeta) => {
-    const appCredentials = credentials.filter((credential) => credential.type === appMeta.type);
+    const appCredentials = credentials.filter((credential) => credential.appId === appMeta.slug);
 
     if (filterOnCredentials && !appCredentials.length && !appMeta.isGlobal) return reducedArray;
 
@@ -65,6 +65,8 @@ function getApps(credentials: CredentialDataWithTeamName[], filterOnCredentials?
         teamId: null,
         appId: appMeta.slug,
         invalid: false,
+        delegatedTo: null,
+        delegatedToId: null,
         team: {
           name: "Global",
         },
@@ -142,10 +144,19 @@ export function getAppFromLocationValue(type: string): AppMeta | undefined {
  * @param concurrentMeetings - from app metadata
  * @returns - true if app supports team install
  */
-export function doesAppSupportTeamInstall(
-  appCategories: string[],
-  concurrentMeetings: boolean | undefined = undefined
-) {
+export function doesAppSupportTeamInstall({
+  appCategories,
+  concurrentMeetings = undefined,
+  isPaid,
+}: {
+  appCategories: string[];
+  concurrentMeetings: boolean | undefined;
+  isPaid: boolean;
+}) {
+  // Paid apps can't be installed on team level - That isn't supported
+  if (isPaid) {
+    return false;
+  }
   return !appCategories.some(
     (category) =>
       category === "calendar" ||
@@ -153,9 +164,12 @@ export function doesAppSupportTeamInstall(
   );
 }
 
+export function isConferencing(appCategories: string[]) {
+  return appCategories.some((category) => category === "conferencing" || category === "video");
+}
 export const defaultVideoAppCategories: AppCategories[] = [
-  "conferencing",
   "messaging",
+  "conferencing",
   // Legacy name for conferencing
   "video",
 ];

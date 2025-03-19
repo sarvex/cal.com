@@ -14,7 +14,7 @@ function setHeader(ctx: NextPageContext, name: string, value: string) {
   try {
     ctx.res?.setHeader(name, value);
   } catch (e) {
-    // Getting "Error [ERR_HTTP_HEADERS_SENT]: Cannot set headers after they are sent to the client" when revalidate calendar chache
+    // Getting "Error [ERR_HTTP_HEADERS_SENT]: Cannot set headers after they are sent to the client" when revalidate calendar cache
     console.log(`Error setting header ${name}=${value} for ${ctx.asPath || "unknown asPath"}`, e);
   }
 }
@@ -32,7 +32,8 @@ class MyDocument extends Document<Props> {
 
     const newLocale =
       ctx.req && getLocaleModule
-        ? await getLocaleModule.getLocale(ctx.req as IncomingMessage & { cookies: Record<string, any> })
+        ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await getLocaleModule.getLocale(ctx.req as IncomingMessage & { cookies: Record<string, any> })
         : "en";
 
     const asPath = ctx.asPath || "";
@@ -65,8 +66,41 @@ class MyDocument extends Document<Props> {
           <script
             nonce={nonce}
             id="newLocale"
+            // eslint-disable-next-line react/no-danger
             dangerouslySetInnerHTML={{
-              __html: `window.calNewLocale = "${newLocale}";`,
+              __html: `
+              window.calNewLocale = "${newLocale}";
+              (function applyTheme() {
+                try {
+                  const appTheme = localStorage.getItem('app-theme');
+                  if (!appTheme) return;
+
+                  let bookingTheme, username;
+                  for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    if (key.startsWith('booking-theme:')) {
+                      bookingTheme = localStorage.getItem(key);
+                      username = key.split("booking-theme:")[1];
+                      break;
+                    }
+                  }
+
+                  const onReady = () => {
+                    const isBookingPage = username && window.location.pathname.slice(1).startsWith(username);
+
+                    if (document.body) {
+                      document.body.classList.add(isBookingPage ? bookingTheme : appTheme);
+                    } else {
+                      requestAnimationFrame(onReady);
+                    }
+                  };
+
+                  requestAnimationFrame(onReady);
+                } catch (e) {
+                  console.error('Error applying theme:', e);
+                }
+              })();
+            `,
             }}
           />
           <link rel="apple-touch-icon" sizes="180x180" href="/api/logo?type=apple-touch-icon" />
@@ -75,8 +109,8 @@ class MyDocument extends Document<Props> {
           <link rel="manifest" href="/site.webmanifest" />
           <link rel="mask-icon" href="/safari-pinned-tab.svg" color="#000000" />
           <meta name="msapplication-TileColor" content="#ff0000" />
-          <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f9fafb" />
-          <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1C1C1C" />
+          <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F9FAFC" />
+          <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1F1F1F" />
           {!IS_PRODUCTION && process.env.VERCEL_ENV === "preview" && (
             // eslint-disable-next-line @next/next/no-sync-scripts
             <script
@@ -87,7 +121,7 @@ class MyDocument extends Document<Props> {
         </Head>
 
         <body
-          className="dark:bg-darkgray-50 desktop-transparent bg-subtle antialiased"
+          className="dark:bg-default bg-subtle antialiased"
           style={
             isEmbed
               ? {

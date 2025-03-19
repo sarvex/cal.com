@@ -1,19 +1,23 @@
 import type { Prisma } from "@prisma/client";
 
-import EventManager from "@calcom/core/EventManager";
-import { sendScheduledEmails } from "@calcom/emails";
+import { sendScheduledEmailsAndSMS } from "@calcom/emails";
 import { doesBookingRequireConfirmation } from "@calcom/features/bookings/lib/doesBookingRequireConfirmation";
+import { getAllCredentials } from "@calcom/features/bookings/lib/getAllCredentialsForUsersOnEvent/getAllCredentials";
 import { handleBookingRequested } from "@calcom/features/bookings/lib/handleBookingRequested";
 import { handleConfirmation } from "@calcom/features/bookings/lib/handleConfirmation";
+import EventManager from "@calcom/lib/EventManager";
 import { HttpError as HttpCode } from "@calcom/lib/http-error";
 import { getBooking } from "@calcom/lib/payment/getBooking";
 import prisma from "@calcom/prisma";
 import { BookingStatus } from "@calcom/prisma/enums";
+import type { EventTypeMetadata } from "@calcom/prisma/zod-utils";
+import { eventTypeAppMetadataOptionalSchema } from "@calcom/prisma/zod-utils";
 
 import logger from "../logger";
 
 const log = logger.getSubLogger({ prefix: ["[handlePaymentSuccess]"] });
 export async function handlePaymentSuccess(paymentId: number, bookingId: number) {
+  log.debug(`handling payment success for bookingId ${bookingId}`);
   const { booking, user: userWithCredentials, evt, eventType } = await getBooking(bookingId);
 
   if (booking.location) evt.location = booking.location;
@@ -23,9 +27,15 @@ export async function handlePaymentSuccess(paymentId: number, bookingId: number)
     status: BookingStatus.ACCEPTED,
   };
 
+  const allCredentials = await getAllCredentials(userWithCredentials, {
+    ...booking.eventType,
+    metadata: booking.eventType?.metadata as EventTypeMetadata,
+  });
+
   const isConfirmed = booking.status === BookingStatus.ACCEPTED;
   if (isConfirmed) {
-    const eventManager = new EventManager(userWithCredentials);
+    const apps = eventTypeAppMetadataOptionalSchema.parse(eventType?.metadata?.apps);
+    const eventManager = new EventManager({ ...userWithCredentials, credentials: allCredentials }, apps);
     const scheduleResult = await eventManager.create(evt);
     bookingData.references = { create: scheduleResult.referencesToCreate };
   }
@@ -60,7 +70,7 @@ export async function handlePaymentSuccess(paymentId: number, bookingId: number)
   if (!isConfirmed) {
     if (!requiresConfirmation) {
       await handleConfirmation({
-        user: userWithCredentials,
+        user: { ...userWithCredentials, credentials: allCredentials },
         evt,
         prisma,
         bookingId: booking.id,
@@ -75,7 +85,7 @@ export async function handlePaymentSuccess(paymentId: number, bookingId: number)
       log.debug(`handling booking request for eventId ${eventType.id}`);
     }
   } else {
-    await sendScheduledEmails({ ...evt });
+    await sendScheduledEmailsAndSMS({ ...evt }, undefined, undefined, undefined, eventType.metadata);
   }
 
   throw new HttpCode({

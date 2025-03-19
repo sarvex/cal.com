@@ -1,20 +1,16 @@
+"use client";
+
 import { useState } from "react";
 
+import { isDelegationCredential } from "@calcom/lib/delegationCredential/clientAndServer";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
 import type { ButtonProps } from "@calcom/ui";
-import { Button, ConfirmationDialogContent, Dialog, DialogTrigger, showToast } from "@calcom/ui";
-import { Trash } from "@calcom/ui/components/icon";
+import { DisconnectIntegrationComponent, showToast } from "@calcom/ui";
 
-export default function DisconnectIntegration({
-  credentialId,
-  label,
-  trashIcon,
-  isGlobal,
-  onSuccess,
-  buttonProps,
-}: {
+export default function DisconnectIntegration(props: {
   credentialId: number;
+  teamId?: number | null;
   label?: string;
   trashIcon?: boolean;
   isGlobal?: boolean;
@@ -22,8 +18,9 @@ export default function DisconnectIntegration({
   buttonProps?: ButtonProps;
 }) {
   const { t } = useLocale();
+  const { onSuccess, credentialId, teamId } = props;
   const [modalOpen, setModalOpen] = useState(false);
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
 
   const mutation = trpc.viewer.deleteCredential.useMutation({
     onSuccess: () => {
@@ -37,33 +34,19 @@ export default function DisconnectIntegration({
     },
     async onSettled() {
       await utils.viewer.connectedCalendars.invalidate();
+      await utils.viewer.apps.integrations.invalidate();
     },
   });
 
+  // Such a credential is added in-memory and removed when Delegation credential is disabled.
+  const disableDisconnect = isDelegationCredential({ credentialId });
   return (
-    <>
-      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogTrigger asChild>
-          <Button
-            color={buttonProps?.color || "destructive"}
-            StartIcon={trashIcon ? Trash : undefined}
-            size="base"
-            variant={trashIcon && !label ? "icon" : "button"}
-            disabled={isGlobal}
-            {...buttonProps}>
-            {label && label}
-          </Button>
-        </DialogTrigger>
-        <ConfirmationDialogContent
-          variety="danger"
-          title={t("remove_app")}
-          confirmBtnText={t("yes_remove_app")}
-          onConfirm={() => {
-            mutation.mutate({ id: credentialId });
-          }}>
-          <p className="mt-5">{t("are_you_sure_you_want_to_remove_this_app")}</p>
-        </ConfirmationDialogContent>
-      </Dialog>
-    </>
+    <DisconnectIntegrationComponent
+      onDeletionConfirmation={() => mutation.mutate({ id: credentialId, ...(teamId ? { teamId } : {}) })}
+      isModalOpen={modalOpen}
+      onModalOpen={() => setModalOpen((prevValue) => !prevValue)}
+      disabled={disableDisconnect}
+      {...props}
+    />
   );
 }

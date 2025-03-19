@@ -4,11 +4,12 @@ import type { Dayjs } from "@calcom/dayjs";
 import dayjs from "@calcom/dayjs";
 import type { DateRange } from "@calcom/lib/date-ranges";
 import { buildDateRanges } from "@calcom/lib/date-ranges";
+import { UserRepository } from "@calcom/lib/server/repository/user";
 import { prisma } from "@calcom/prisma";
 
 import { TRPCError } from "@trpc/server";
 
-import type { TrpcSessionUser } from "../../../../trpc";
+import type { TrpcSessionUser } from "../../../../types";
 import type { TListTeamAvailaiblityScheme } from "./listTeamAvailability.schema";
 
 type GetOptions = {
@@ -20,31 +21,45 @@ type GetOptions = {
 
 async function getTeamMembers({
   teamId,
+  organizationId,
   teamIds,
   cursor,
   limit,
+  searchString,
 }: {
   teamId?: number;
+  organizationId: number | null;
   teamIds?: number[];
   cursor: number | null | undefined;
   limit: number;
+  searchString?: string | null;
 }) {
-  return await prisma.membership.findMany({
+  const memberships = await prisma.membership.findMany({
     where: {
       teamId: {
         in: teamId ? [teamId] : teamIds,
       },
+      ...(searchString
+        ? {
+            OR: [
+              { user: { username: { contains: searchString } } },
+              { user: { name: { contains: searchString } } },
+              { user: { email: { contains: searchString } } },
+            ],
+          }
+        : {}),
     },
     select: {
       id: true,
       role: true,
       user: {
         select: {
+          avatarUrl: true,
           id: true,
-          organizationId: true,
           username: true,
           name: true,
           email: true,
+          travelSchedules: true,
           timeZone: true,
           defaultScheduleId: true,
         },
@@ -52,11 +67,21 @@ async function getTeamMembers({
     },
     cursor: cursor ? { id: cursor } : undefined,
     take: limit + 1, // We take +1 as itll be used for the next cursor
-    orderBy: {
-      id: "asc",
-    },
+    orderBy: [{ userId: "asc" }, { id: "asc" }], // Prisma require a unique field for tie breaking duplicate value for pagination
     distinct: ["userId"],
   });
+
+  const membershipWithUserProfile = [];
+  for (const membership of memberships) {
+    membershipWithUserProfile.push({
+      ...membership,
+      user: await UserRepository.enrichUserWithItsProfile({
+        user: membership.user,
+      }),
+    });
+  }
+
+  return membershipWithUserProfile;
 }
 
 type Member = Awaited<ReturnType<typeof getTeamMembers>>[number];
@@ -65,7 +90,7 @@ async function buildMember(member: Member, dateFrom: Dayjs, dateTo: Dayjs) {
   if (!member.user.defaultScheduleId) {
     return {
       id: member.user.id,
-      organizationId: member.user.organizationId,
+      organizationId: member.user.profile?.organizationId ?? null,
       name: member.user.name,
       username: member.user.username,
       email: member.user.email,
@@ -82,18 +107,27 @@ async function buildMember(member: Member, dateFrom: Dayjs, dateTo: Dayjs) {
   });
   const timeZone = schedule?.timeZone || member.user.timeZone;
 
-  const dateRanges = buildDateRanges({
+  const { dateRanges } = buildDateRanges({
     dateFrom,
     dateTo,
     timeZone,
     availability: schedule?.availability ?? [],
+    travelSchedules: member.user.travelSchedules.map((schedule) => {
+      return {
+        startDate: dayjs(schedule.startDate),
+        endDate: schedule.endDate ? dayjs(schedule.endDate) : undefined,
+        timeZone: schedule.timeZone,
+      };
+    }),
   });
 
   return {
     id: member.user.id,
     username: member.user.username,
     email: member.user.email,
-    organizationId: member.user.organizationId,
+    avatarUrl: member.user.avatarUrl,
+    profile: member.user.profile,
+    organizationId: member.user.profile?.organizationId,
     name: member.user.name,
     timeZone,
     role: member.role,
@@ -103,7 +137,7 @@ async function buildMember(member: Member, dateFrom: Dayjs, dateTo: Dayjs) {
 }
 
 async function getInfoForAllTeams({ ctx, input }: GetOptions) {
-  const { cursor, limit } = input;
+  const { cursor, limit, searchString } = input;
 
   // Get all teamIds for the user
   const teamIds = await prisma.membership
@@ -124,25 +158,28 @@ async function getInfoForAllTeams({ ctx, input }: GetOptions) {
 
   const teamMembers = await getTeamMembers({
     teamIds,
+    organizationId: ctx.user.organizationId,
     cursor,
     limit,
+    searchString,
   });
 
   // Get total team count across all teams the user is in (for pagination)
 
-  const totalTeamMembers =
-    await prisma.$queryRaw<number>`SELECT COUNT(DISTINCT "userId")::integer from "Membership" WHERE "teamId" IN (${Prisma.join(
-      teamIds
-    )})`;
+  const totalTeamMembers = await prisma.$queryRaw<
+    {
+      count: number;
+    }[]
+  >`SELECT COUNT(DISTINCT "userId")::integer from "Membership" WHERE "teamId" IN (${Prisma.join(teamIds)})`;
 
   return {
     teamMembers,
-    totalTeamMembers,
+    totalTeamMembers: totalTeamMembers[0].count,
   };
 }
 
 export const listTeamAvailabilityHandler = async ({ ctx, input }: GetOptions) => {
-  const { cursor, limit } = input;
+  const { cursor, limit, searchString } = input;
   const teamId = input.teamId || ctx.user.organizationId;
 
   let teamMembers: Member[] = [];
@@ -171,6 +208,15 @@ export const listTeamAvailabilityHandler = async ({ ctx, input }: GetOptions) =>
       totalTeamMembers = await prisma.membership.count({
         where: {
           teamId: teamId,
+          ...(searchString
+            ? {
+                OR: [
+                  { user: { username: { contains: searchString } } },
+                  { user: { name: { contains: searchString } } },
+                  { user: { email: { contains: searchString } } },
+                ],
+              }
+            : {}),
         },
       });
 
@@ -179,6 +225,8 @@ export const listTeamAvailabilityHandler = async ({ ctx, input }: GetOptions) =>
         teamId,
         cursor,
         limit,
+        organizationId: ctx.user.organizationId,
+        searchString,
       });
     }
   }
@@ -186,7 +234,7 @@ export const listTeamAvailabilityHandler = async ({ ctx, input }: GetOptions) =>
   let nextCursor: typeof cursor | undefined = undefined;
   if (teamMembers && teamMembers.length > limit) {
     const nextItem = teamMembers.pop();
-    nextCursor = nextItem!.id;
+    nextCursor = nextItem?.id;
   }
 
   const dateFrom = dayjs(input.startDate).tz(input.loggedInUsersTz).subtract(1, "day");
@@ -196,11 +244,26 @@ export const listTeamAvailabilityHandler = async ({ ctx, input }: GetOptions) =>
 
   const members = await Promise.all(buildMembers);
 
+  let belongsToTeam = true;
+
+  if (totalTeamMembers === 0) {
+    const membership = await prisma.membership.findFirst({
+      where: {
+        userId: ctx.user.id,
+      },
+      select: {
+        id: true,
+      },
+    });
+    belongsToTeam = !!membership;
+  }
+
   return {
     rows: members || [],
     nextCursor,
     meta: {
       totalRowCount: totalTeamMembers,
+      isApartOfAnyTeam: belongsToTeam,
     },
   };
 };

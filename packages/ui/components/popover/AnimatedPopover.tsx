@@ -1,31 +1,37 @@
 import * as Popover from "@radix-ui/react-popover";
 import React from "react";
 
-import { classNames } from "@calcom/lib";
-import { Tooltip } from "@calcom/ui";
+import classNames from "@calcom/ui/classNames";
 
-import { ChevronDown } from "../icon";
+import { buttonClasses } from "../button";
+import { Icon } from "../icon";
+import { Tooltip } from "../tooltip";
 
 export const AnimatedPopover = ({
   text,
+  PrefixComponent,
   count,
   popoverTriggerClassNames,
   children,
   Trigger,
   defaultOpen,
+  prefix,
 }: {
   text: string;
+  PrefixComponent?: React.ReactNode;
   count?: number;
   children: React.ReactNode;
   popoverTriggerClassNames?: string;
   Trigger?: React.ReactNode;
   defaultOpen?: boolean;
+  prefix?: string;
 }) => {
   const [open, setOpen] = React.useState(defaultOpen ?? false);
-  const ref = React.useRef<HTMLDivElement>(null);
-  // calculate which aligment to open the popover with based on which half of the screen it is on (left or right)
+  const ref = React.useRef<HTMLButtonElement>(null);
+  // calculate which alignment to open the popover with based on which half of the screen it's on (left or right)
   const [align, setAlign] = React.useState<"start" | "end">("start");
-  React.useEffect(() => {
+
+  React.useLayoutEffect(() => {
     const handleResize = () => {
       const halfWidth = window.innerWidth / 2;
       const { x } = ref?.current?.getBoundingClientRect() || {
@@ -48,18 +54,22 @@ export const AnimatedPopover = ({
   return (
     <Popover.Root defaultOpen={defaultOpen} onOpenChange={setOpen} modal={true}>
       <Popover.Trigger asChild>
-        <div
+        <button
           ref={ref}
           className={classNames(
-            "hover:border-emphasis border-default text-default hover:text-emphasis radix-state-open:border-emphasis radix-state-open:outline-none radix-state-open:ring-2 radix-state-open:ring-emphasis mb-4 flex h-9 max-h-72 items-center justify-between whitespace-nowrap rounded-md border px-3 py-2 text-sm hover:cursor-pointer",
+            buttonClasses({
+              color: "secondary",
+            }),
             popoverTriggerClassNames
           )}>
           {Trigger ? (
             Trigger
           ) : (
             <div className="max-w-36 flex items-center">
-              <Tooltip content={text}>
-                <div className="flex select-none truncate font-medium">
+              <Tooltip content={prefix ? `${prefix}${text}` : text}>
+                <div className="flex select-none items-center truncate font-medium leading-none">
+                  {PrefixComponent ? PrefixComponent : null}
+                  {prefix && <span className="text-subtle">{prefix}&nbsp;</span>}
                   {text}
                   {count && count > 0 && (
                     <div className="text-emphasis flex items-center justify-center rounded-full font-semibold">
@@ -69,12 +79,13 @@ export const AnimatedPopover = ({
                   )}
                 </div>
               </Tooltip>
-              <ChevronDown
+              <Icon
+                name="chevron-down"
                 className={classNames("ml-2 w-4 transition-transform duration-150", open && "rotate-180")}
               />
             </div>
           )}
-        </div>
+        </button>
       </Popover.Trigger>
       <Popover.Content side="bottom" align={align} asChild>
         <div

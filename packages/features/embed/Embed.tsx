@@ -1,8 +1,8 @@
 import { Collapsible, CollapsibleContent } from "@radix-ui/react-collapsible";
 import classNames from "classnames";
 import { useSession } from "next-auth/react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import type { RefObject } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import type { RefObject, Dispatch, SetStateAction } from "react";
 import { createRef, useRef, useState } from "react";
 import type { ControlProps } from "react-select";
 import { components } from "react-select";
@@ -10,17 +10,17 @@ import { shallow } from "zustand/shallow";
 
 import type { Dayjs } from "@calcom/dayjs";
 import dayjs from "@calcom/dayjs";
-import { AvailableTimesHeader } from "@calcom/features/bookings";
-import { AvailableTimes } from "@calcom/features/bookings";
+import { AvailableTimes, AvailableTimesHeader } from "@calcom/features/bookings";
 import { useBookerStore, useInitializeBookerStore } from "@calcom/features/bookings/Booker/store";
 import { useEvent, useScheduleForEvent } from "@calcom/features/bookings/Booker/utils/event";
-import { useTimePreferences } from "@calcom/features/bookings/lib/timePreferences";
 import DatePicker from "@calcom/features/calendars/DatePicker";
-import { useFlagMap } from "@calcom/features/flags/context/provider";
+import { TimezoneSelect } from "@calcom/features/components/timezone-select";
+import type { Slot } from "@calcom/features/schedules";
 import { useNonEmptyScheduleDays } from "@calcom/features/schedules";
 import { useSlotsForDate } from "@calcom/features/schedules/lib/use-schedule/useSlotsForDate";
-import { APP_NAME, CAL_URL } from "@calcom/lib/constants";
+import { APP_NAME, DEFAULT_LIGHT_BRAND_COLOR, DEFAULT_DARK_BRAND_COLOR } from "@calcom/lib/constants";
 import { weekdayToWeekIndex } from "@calcom/lib/date-fns";
+import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { BookerLayouts } from "@calcom/prisma/zod-utils";
 import type { RouterOutputs } from "@calcom/trpc/react";
@@ -33,35 +33,74 @@ import {
   DialogContent,
   DialogFooter,
   HorizontalTabs,
+  Icon,
   Label,
   Select,
   showToast,
   Switch,
   TextField,
-  TimezoneSelect,
 } from "@calcom/ui";
-import { ArrowLeft, Sun } from "@calcom/ui/components/icon";
 
+import { useBookerTime } from "../bookings/Booker/components/hooks/useBookerTime";
+import { buildCssVarsPerTheme } from "./lib/buildCssVarsPerTheme";
+import { EmbedTheme } from "./lib/constants";
 import { getDimension } from "./lib/getDimension";
+import { useEmbedDialogCtx } from "./lib/hooks/useEmbedDialogCtx";
+import { useEmbedParams } from "./lib/hooks/useEmbedParams";
 import type { EmbedTabs, EmbedType, EmbedTypes, PreviewState } from "./types";
 
 type EventType = RouterOutputs["viewer"]["eventTypes"]["get"]["eventType"] | undefined;
+type EmbedDialogProps = {
+  types: EmbedTypes;
+  tabs: EmbedTabs;
+  eventTypeHideOptionDisabled: boolean;
+  defaultBrandColor: { brandColor: string | null; darkBrandColor: string | null } | null;
+  noQueryParamMode?: boolean;
+};
 
-const enum Theme {
-  auto = "auto",
-  light = "light",
-  dark = "dark",
+type GotoStateProps = {
+  embedType?: EmbedType | null;
+  embedTabName?: string | null;
+  embedUrl?: string | null;
+  eventId?: string | null;
+  namespace?: string | null;
+  date?: string | null;
+  month?: string | null;
+  dialog?: string;
+};
+
+const queryParamsForDialog = [
+  "embedType",
+  "embedTabName",
+  "embedUrl",
+  "eventId",
+  "namespace",
+  "date",
+  "month",
+];
+
+function chooseTimezone({
+  timezoneFromBookerStore,
+  timezoneFromTimePreferences,
+  userSettingsTimezone,
+}: {
+  timezoneFromBookerStore: string | null;
+  timezoneFromTimePreferences: string;
+  userSettingsTimezone: string | undefined;
+}) {
+  // We prefer user's timezone configured in settings at the moment - Might be a better idea to prefer timezoneFromTimePreferences over user settings as the user might be in different timezone
+  return timezoneFromBookerStore ?? userSettingsTimezone ?? timezoneFromTimePreferences;
 }
-
-const queryParamsForDialog = ["embedType", "embedTabName", "embedUrl", "eventId"];
 
 function useRouterHelpers() {
   const router = useRouter();
-  const searchParams = useSearchParams();
+  const searchParams = useCompatSearchParams();
   const pathname = usePathname();
 
   const goto = (newSearchParams: Record<string, string>) => {
-    const newQuery = new URLSearchParams(searchParams);
+    const newQuery = new URLSearchParams(searchParams.toString());
+    newQuery.delete("slug");
+    newQuery.delete("pages");
     Object.keys(newSearchParams).forEach((key) => {
       newQuery.set(key, newSearchParams[key]);
     });
@@ -70,7 +109,7 @@ function useRouterHelpers() {
   };
 
   const removeQueryParams = (queryParams: string[]) => {
-    const params = new URLSearchParams(searchParams);
+    const params = new URLSearchParams(searchParams.toString());
 
     queryParams.forEach((param) => {
       params.delete(param);
@@ -82,22 +121,83 @@ function useRouterHelpers() {
   return { goto, removeQueryParams };
 }
 
-const ThemeSelectControl = ({ children, ...props }: ControlProps<{ value: Theme; label: string }, false>) => {
+function useEmbedGoto(noQueryParamMode = false) {
+  const { goto, removeQueryParams } = useRouterHelpers();
+  const { setEmbedState } = useEmbedDialogCtx(noQueryParamMode);
+
+  const gotoState = (props: GotoStateProps) => {
+    if (noQueryParamMode) {
+      setEmbedState((prev) => ({
+        ...prev,
+        embedType: props.embedType ?? prev?.embedType ?? null,
+        embedTabName: props.embedTabName ?? prev?.embedTabName ?? null,
+        embedUrl: props.embedUrl ?? prev?.embedUrl ?? null,
+        eventId: props.eventId ?? prev?.eventId ?? null,
+        namespace: props.namespace ?? prev?.namespace ?? null,
+        date: props.date ?? prev?.date ?? null,
+        month: props.month ?? prev?.month ?? null,
+      }));
+    } else {
+      const validQueryParams = Object.fromEntries(
+        Object.entries(props).filter(([_, value]) => value !== null) as [string, string][]
+      );
+      goto(validQueryParams);
+    }
+  };
+
+  const resetState = () => {
+    if (noQueryParamMode) {
+      setEmbedState(null);
+    } else {
+      removeQueryParams(["dialog", ...queryParamsForDialog]);
+    }
+  };
+
+  const gotoEmbedTypeSelectionState = () => {
+    if (noQueryParamMode) {
+      setEmbedState((prev) => ({
+        ...prev,
+        embedType: null,
+        embedTabName: null,
+        embedUrl: prev?.embedUrl ?? null,
+        eventId: prev?.eventId ?? null,
+        namespace: prev?.namespace ?? null,
+        date: prev?.date ?? null,
+        month: prev?.month ?? null,
+      }));
+    } else {
+      removeQueryParams(["embedType", "embedTabName"]);
+    }
+  };
+
+  return { gotoState, resetState, gotoEmbedTypeSelectionState };
+}
+
+const ThemeSelectControl = ({
+  children,
+  ...props
+}: ControlProps<{ value: EmbedTheme; label: string }, false>) => {
   return (
     <components.Control {...props}>
-      <Sun className="text-subtle mr-2 h-4 w-4" />
+      <Icon name="sun" className="text-subtle mr-2 h-4 w-4" />
       {children}
     </components.Control>
   );
 };
 
-const ChooseEmbedTypesDialogContent = ({ types }: { types: EmbedTypes }) => {
+const ChooseEmbedTypesDialogContent = ({
+  types,
+  noQueryParamMode,
+}: {
+  types: EmbedTypes;
+  noQueryParamMode: boolean;
+}) => {
   const { t } = useLocale();
-  const { goto } = useRouterHelpers();
+  const { gotoState } = useEmbedGoto(noQueryParamMode);
   return (
     <DialogContent className="rounded-lg p-10" type="creation" size="lg">
       <div className="mb-2">
-        <h3 className="font-cal text-emphasis mb-2 text-2xl font-bold leading-none" id="modal-title">
+        <h3 className="font-cal text-emphasis mb-2 text-2xl font-semibold leading-none" id="modal-title">
           {t("how_you_want_add_cal_site", { appName: APP_NAME })}
         </h3>
         <div>
@@ -107,15 +207,15 @@ const ChooseEmbedTypesDialogContent = ({ types }: { types: EmbedTypes }) => {
       <div className="items-start space-y-2 md:flex md:space-y-0">
         {types.map((embed, index) => (
           <button
-            className="hover:bg-subtle bg-muted	w-full self-stretch rounded-md border border-transparent p-6 text-left hover:rounded-md ltr:mr-4 ltr:last:mr-0 rtl:ml-4 rtl:last:ml-0 lg:w-1/3"
+            className="hover:bg-subtle bg-muted	w-full self-stretch rounded-md border border-transparent p-6 text-left transition hover:rounded-md ltr:mr-4 ltr:last:mr-0 rtl:ml-4 rtl:last:ml-0 lg:w-1/3"
             key={index}
             data-testid={embed.type}
             onClick={() => {
-              goto({
-                embedType: embed.type,
+              gotoState({
+                embedType: embed.type as EmbedType,
               });
             }}>
-            <div className="bg-default order-none box-border flex-none rounded-md border border-solid dark:bg-transparent dark:invert">
+            <div className="bg-default order-none box-border flex-none rounded-md border border-solid transition dark:bg-transparent dark:invert">
               {embed.illustration}
             </div>
             <div className="text-emphasis mt-4 font-semibold">{embed.title}</div>
@@ -127,36 +227,66 @@ const ChooseEmbedTypesDialogContent = ({ types }: { types: EmbedTypes }) => {
   );
 };
 
-const EmailEmbed = ({ eventType, username }: { eventType?: EventType; username: string }) => {
+const EmailEmbed = ({
+  eventType,
+  username,
+  orgSlug,
+  isTeamEvent,
+  selectedDuration,
+  setSelectedDuration,
+  userSettingsTimezone,
+}: {
+  eventType?: EventType;
+  username: string;
+  orgSlug?: string;
+  isTeamEvent: boolean;
+  selectedDuration: number | undefined;
+  setSelectedDuration: Dispatch<SetStateAction<number | undefined>>;
+  userSettingsTimezone?: string;
+}) => {
   const { t, i18n } = useLocale();
-
-  const [timezone] = useTimePreferences((state) => [state.timezone]);
+  const { timezoneFromBookerStore, timezoneFromTimePreferences } = useBookerTime();
+  const timezone = chooseTimezone({
+    timezoneFromBookerStore,
+    timezoneFromTimePreferences,
+    userSettingsTimezone,
+  });
 
   useInitializeBookerStore({
     username,
     eventSlug: eventType?.slug ?? "",
     eventId: eventType?.id,
     layout: BookerLayouts.MONTH_VIEW,
+    org: orgSlug,
+    isTeamEvent,
   });
 
   const [month, selectedDate, selectedDatesAndTimes] = useBookerStore(
     (state) => [state.month, state.selectedDate, state.selectedDatesAndTimes],
     shallow
   );
-  const [setSelectedDate, setMonth, setSelectedDatesAndTimes, setSelectedTimeslot] = useBookerStore(
-    (state) => [
-      state.setSelectedDate,
-      state.setMonth,
-      state.setSelectedDatesAndTimes,
-      state.setSelectedTimeslot,
-    ],
-    shallow
-  );
+  const [setSelectedDate, setMonth, setSelectedDatesAndTimes, setSelectedTimeslot, setTimezone] =
+    useBookerStore(
+      (state) => [
+        state.setSelectedDate,
+        state.setMonth,
+        state.setSelectedDatesAndTimes,
+        state.setSelectedTimeslot,
+        state.setTimezone,
+      ],
+      shallow
+    );
   const event = useEvent();
-  const schedule = useScheduleForEvent();
+  const schedule = useScheduleForEvent({
+    orgSlug,
+    eventId: eventType?.id,
+    isTeamEvent,
+    duration: selectedDuration,
+  });
   const nonEmptyScheduleDays = useNonEmptyScheduleDays(schedule?.data?.slots);
 
-  const onTimeSelect = (time: string) => {
+  const handleSlotClick = (slot: Slot) => {
+    const { time } = slot;
     if (!eventType) {
       return null;
     }
@@ -213,6 +343,15 @@ const EmailEmbed = ({ eventType, username }: { eventType?: EventType; username: 
   if (!eventType) {
     return null;
   }
+  if (!selectedDuration) {
+    setSelectedDuration(eventType.length);
+  }
+
+  const multipleDurations = eventType?.metadata?.multipleDuration ?? [];
+  const durationsOptions = multipleDurations.map((duration) => ({
+    label: `${duration} ${t("minutes")}`,
+    value: duration,
+  }));
 
   return (
     <div className="flex flex-col">
@@ -221,7 +360,7 @@ const EmailEmbed = ({ eventType, username }: { eventType?: EventType; username: 
           <CollapsibleContent>
             <div className="text-default text-sm">{t("select_date")}</div>
             <DatePicker
-              isLoading={schedule.isLoading}
+              isPending={schedule.isPending}
               onChange={(date: Dayjs | null) => {
                 setSelectedDate(date === null ? date : date.format("YYYY-MM-DD"));
               }}
@@ -233,7 +372,7 @@ const EmailEmbed = ({ eventType, username }: { eventType?: EventType; username: 
               locale={i18n.language}
               browsingDate={month ? dayjs(month) : undefined}
               selected={dayjs(selectedDate)}
-              weekStart={weekdayToWeekIndex(event?.data?.users?.[0]?.weekStart)}
+              weekStart={weekdayToWeekIndex(event?.data?.subsetOfUsers?.[0]?.weekStart)}
               eventSlug={eventType?.slug}
             />
           </CollapsibleContent>
@@ -254,9 +393,10 @@ const EmailEmbed = ({ eventType, username }: { eventType?: EventType; username: 
                     ? selectedDatesAndTimes[eventType.slug][selectedDate as string]
                     : undefined
                 }
-                onTimeSelect={onTimeSelect}
+                handleSlotClick={handleSlotClick}
                 slots={slots}
                 showAvailableSeatsCount={eventType.seatsShowAvailabilityCount}
+                event={event}
               />
             </div>
           ) : null}
@@ -266,12 +406,23 @@ const EmailEmbed = ({ eventType, username }: { eventType?: EventType; username: 
         <Collapsible open>
           <CollapsibleContent>
             <div className="text-default mb-[9px] text-sm">{t("duration")}</div>
-            <TextField
-              disabled
-              label={t("duration")}
-              defaultValue={eventType?.length ?? 15}
-              addOnSuffix={<>{t("minutes")}</>}
-            />
+            {durationsOptions.length > 0 ? (
+              <Select<{ label: string; value: number }>
+                value={durationsOptions.find((option) => option.value === selectedDuration)}
+                options={durationsOptions}
+                onChange={(option) => {
+                  setSelectedDuration(option?.value);
+                  setSelectedDatesAndTimes({});
+                }}
+              />
+            ) : (
+              <TextField
+                disabled
+                label={t("duration")}
+                defaultValue={eventType?.length ?? 15}
+                addOnSuffix={<>{t("minutes")}</>}
+              />
+            )}
           </CollapsibleContent>
         </Collapsible>
       </div>
@@ -279,7 +430,7 @@ const EmailEmbed = ({ eventType, username }: { eventType?: EventType; username: 
         <Collapsible open>
           <CollapsibleContent>
             <div className="text-default mb-[9px] text-sm">{t("timezone")}</div>
-            <TimezoneSelect id="timezone" value={timezone} isDisabled />
+            <TimezoneSelect id="timezone" value={timezone} onChange={({ value }) => setTimezone(value)} />
           </CollapsibleContent>
         </Collapsible>
       </div>
@@ -293,6 +444,9 @@ const EmailEmbedPreview = ({
   username,
   month,
   selectedDateAndTime,
+  calLink,
+  selectedDuration,
+  userSettingsTimezone,
 }: {
   eventType: EventType;
   timezone?: string;
@@ -300,9 +454,18 @@ const EmailEmbedPreview = ({
   username?: string;
   month?: string;
   selectedDateAndTime: { [key: string]: string[] };
+  calLink: string;
+  selectedDuration: number | undefined;
+  userSettingsTimezone?: string;
 }) => {
   const { t } = useLocale();
-  const [timeFormat, timezone] = useTimePreferences((state) => [state.timeFormat, state.timezone]);
+  const { timeFormat, timezoneFromBookerStore, timezoneFromTimePreferences } = useBookerTime();
+  const timezone = chooseTimezone({
+    timezoneFromBookerStore,
+    timezoneFromTimePreferences,
+    userSettingsTimezone,
+  });
+
   if (!eventType) {
     return null;
   }
@@ -340,7 +503,7 @@ const EmailEmbedPreview = ({
               lineHeight: "17px",
               color: "#333333",
             }}>
-            {t("duration")}: <b style={{ color: "black" }}>{eventType.length} mins</b>
+            {t("duration")}: <b style={{ color: "black" }}>{selectedDuration} mins</b>
           </div>
           <div>
             <b style={{ color: "black" }}>
@@ -362,7 +525,10 @@ const EmailEmbedPreview = ({
                 Object.keys(selectedDateAndTime)
                   .sort()
                   .map((key) => {
-                    const date = new Date(key);
+                    const firstSlotOfSelectedDay = selectedDateAndTime[key][0];
+                    const selectedDate = dayjs(firstSlotOfSelectedDay)
+                      .tz(timezone)
+                      .format("dddd, MMMM D, YYYY");
                     return (
                       <table
                         key={key}
@@ -383,12 +549,7 @@ const EmailEmbedPreview = ({
                                   color: "rgb(26, 26, 26)",
                                   fontWeight: "bold",
                                 }}>
-                                {date.toLocaleDateString("en-US", {
-                                  weekday: "long",
-                                  month: "long",
-                                  day: "numeric",
-                                  year: "numeric",
-                                })}
+                                {selectedDate}
                                 &nbsp;
                               </span>
                             </td>
@@ -400,7 +561,13 @@ const EmailEmbedPreview = ({
                                   <tr style={{ height: "25px" }}>
                                     {selectedDateAndTime[key]?.length > 0 &&
                                       selectedDateAndTime[key].map((time) => {
-                                        const bookingURL = `${CAL_URL}/${username}/${eventType.slug}?duration=${eventType.length}&date=${key}&month=${month}&slot=${time}`;
+                                        // If teamId is present on eventType and is not null, it means it is a team event.
+                                        // So we add 'team/' to the url.
+                                        const bookingURL = `${eventType.bookerUrl}/${
+                                          eventType.teamId !== null ? "team/" : ""
+                                        }${username}/${
+                                          eventType.slug
+                                        }?duration=${selectedDuration}&date=${key}&month=${month}&slot=${time}&cal.tz=${timezone}`;
                                         return (
                                           <td
                                             key={time}
@@ -463,7 +630,8 @@ const EmailEmbedPreview = ({
               <div style={{ marginTop: "13px" }}>
                 <a
                   className="more"
-                  href={`${CAL_URL}/${username}/${eventType.slug}`}
+                  data-testid="see_all_available_times"
+                  href={`${eventType.bookerUrl}/${calLink}?cal.tz=${timezone}`}
                   style={{
                     textDecoration: "none",
                     cursor: "pointer",
@@ -497,44 +665,68 @@ const EmbedTypeCodeAndPreviewDialogContent = ({
   embedType,
   embedUrl,
   tabs,
+  namespace,
   eventTypeHideOptionDisabled,
   types,
-}: {
+  defaultBrandColor,
+  noQueryParamMode,
+}: EmbedDialogProps & {
   embedType: EmbedType;
   embedUrl: string;
-  tabs: EmbedTabs;
-  eventTypeHideOptionDisabled: boolean;
-  types: EmbedTypes;
+  namespace: string;
+  noQueryParamMode?: boolean;
 }) => {
   const { t } = useLocale();
-  const searchParams = useSearchParams();
+  const searchParams = useCompatSearchParams();
   const pathname = usePathname();
-  const { goto, removeQueryParams } = useRouterHelpers();
+  const { resetState, gotoState, gotoEmbedTypeSelectionState } = useEmbedGoto(noQueryParamMode);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const dialogContentRef = useRef<HTMLDivElement>(null);
-  const flags = useFlagMap();
-  const isBookerLayoutsEnabled = flags["booker-layouts"] === true;
   const emailContentRef = useRef<HTMLDivElement>(null);
   const { data } = useSession();
+
   const [month, selectedDatesAndTimes] = useBookerStore(
     (state) => [state.month, state.selectedDatesAndTimes],
     shallow
   );
-  const eventId = searchParams?.get("eventId");
+
+  const embedParams = useEmbedParams(noQueryParamMode);
+  const eventId = embedParams.eventId;
   const parsedEventId = parseInt(eventId ?? "", 10);
   const calLink = decodeURIComponent(embedUrl);
   const { data: eventTypeData } = trpc.viewer.eventTypes.get.useQuery(
     { id: parsedEventId },
     { enabled: !Number.isNaN(parsedEventId) && embedType === "email", refetchOnWindowFocus: false }
   );
+  const { data: userSettings } = trpc.viewer.me.get.useQuery();
+
+  const teamSlug = !!eventTypeData?.team ? eventTypeData.team.slug : null;
 
   const s = (href: string) => {
-    const _searchParams = new URLSearchParams(searchParams);
+    const _searchParams = new URLSearchParams(searchParams.toString());
     const [a, b] = href.split("=");
     _searchParams.set(a, b);
     return `${pathname?.split("?")[0] ?? ""}?${_searchParams.toString()}`;
   };
-  const parsedTabs = tabs.map((t) => ({ ...t, href: s(t.href) }));
+  const parsedTabs = tabs.map((t) => {
+    const { href, ...rest } = t;
+    const tabName = href.split("=")[1];
+    return {
+      ...rest,
+      isActive: tabName === embedParams.embedTabName,
+      ...(noQueryParamMode
+        ? {
+            onClick: () => {
+              gotoState({ embedTabName: tabName });
+            },
+            // We still pass the href(which is unique) so that all the tabs aren't marked as active
+            href: t.href,
+          }
+        : {
+            href: s(t.href),
+          }),
+    };
+  });
   const embedCodeRefs: Record<(typeof tabs)[0]["name"], RefObject<HTMLTextAreaElement>> = {};
   tabs
     .filter((tab) => tab.type === "code")
@@ -544,31 +736,54 @@ const EmbedTypeCodeAndPreviewDialogContent = ({
 
   const refOfEmbedCodesRefs = useRef(embedCodeRefs);
   const embed = types.find((embed) => embed.type === embedType);
+  const [selectedDuration, setSelectedDuration] = useState(eventTypeData?.eventType.length);
 
   const [isEmbedCustomizationOpen, setIsEmbedCustomizationOpen] = useState(true);
   const [isBookingCustomizationOpen, setIsBookingCustomizationOpen] = useState(true);
+  const defaultConfig = {
+    layout: BookerLayouts.MONTH_VIEW,
+  };
+
+  const paletteDefaultValue = (paletteName: string) => {
+    if (paletteName === "brandColor") {
+      return defaultBrandColor?.brandColor ?? DEFAULT_LIGHT_BRAND_COLOR;
+    }
+
+    if (paletteName === "darkBrandColor") {
+      return defaultBrandColor?.darkBrandColor ?? DEFAULT_DARK_BRAND_COLOR;
+    }
+
+    return "#000000";
+  };
+
   const [previewState, setPreviewState] = useState<PreviewState>({
     inline: {
       width: "100%",
       height: "100%",
-    },
-    theme: Theme.auto,
-    layout: BookerLayouts.MONTH_VIEW,
-    floatingPopup: {},
-    elementClick: {},
+      config: defaultConfig,
+    } as PreviewState["inline"],
+    theme: EmbedTheme.auto,
+    layout: defaultConfig.layout,
+    floatingPopup: {
+      config: defaultConfig,
+    } as PreviewState["floatingPopup"],
+    elementClick: {
+      config: defaultConfig,
+    } as PreviewState["elementClick"],
     hideEventTypeDetails: false,
     palette: {
-      brandColor: "#000000",
+      brandColor: defaultBrandColor?.brandColor ?? null,
+      darkBrandColor: defaultBrandColor?.darkBrandColor ?? null,
     },
   });
 
   const close = () => {
-    removeQueryParams(["dialog", ...queryParamsForDialog]);
+    resetState();
   };
 
   // Use embed-code as default tab
-  if (!searchParams?.get("embedTabName")) {
-    goto({
+  if (!embedParams.embedTabName) {
+    gotoState({
       embedTabName: "embed-code",
     });
   }
@@ -578,7 +793,7 @@ const EmbedTypeCodeAndPreviewDialogContent = ({
     return null;
   }
 
-  const addToPalette = (update: (typeof previewState)["palette"]) => {
+  const addToPalette = (update: Partial<(typeof previewState)["palette"]>) => {
     setPreviewState((previewState) => {
       return {
         ...previewState,
@@ -621,11 +836,10 @@ const EmbedTypeCodeAndPreviewDialogContent = ({
       theme: previewState.theme,
       layout: previewState.layout,
       hideEventTypeDetails: previewState.hideEventTypeDetails,
-      styles: {
-        branding: {
-          ...previewState.palette,
-        },
-      },
+      cssVarsPerTheme: buildCssVarsPerTheme({
+        brandColor: previewState.palette.brandColor,
+        darkBrandColor: previewState.palette.darkBrandColor,
+      }),
     },
   });
 
@@ -666,9 +880,9 @@ const EmbedTypeCodeAndPreviewDialogContent = ({
   }
 
   const ThemeOptions = [
-    { value: Theme.auto, label: "Auto" },
-    { value: Theme.dark, label: "Dark Theme" },
-    { value: Theme.light, label: "Light Theme" },
+    { value: EmbedTheme.auto, label: "Auto" },
+    { value: EmbedTheme.dark, label: "Dark EmbedTheme" },
+    { value: EmbedTheme.light, label: "Light EmbedTheme" },
   ];
 
   const layoutOptions = [
@@ -679,14 +893,15 @@ const EmbedTypeCodeAndPreviewDialogContent = ({
 
   const FloatingPopupPositionOptions = [
     {
-      value: "bottom-right",
+      value: "bottom-right" as const,
       label: "Bottom right",
     },
     {
-      value: "bottom-left",
+      value: "bottom-left" as const,
       label: "Bottom left",
     },
   ];
+  const previewTab = tabs.find((tab) => tab.name === "Preview");
 
   return (
     <DialogContent
@@ -695,22 +910,26 @@ const EmbedTypeCodeAndPreviewDialogContent = ({
       className="rounded-lg p-0.5 sm:max-w-[80rem]"
       type="creation">
       <div className="flex">
-        <div className="bg-muted flex h-[90vh] w-1/3 flex-col overflow-y-auto p-8">
+        <div className="bg-muted flex h-[95vh] w-1/3 flex-col overflow-y-auto p-8">
           <h3
             className="text-emphasis mb-2.5 flex items-center text-xl font-semibold leading-5"
             id="modal-title">
-            <button
-              className="h-6 w-6"
-              onClick={() => {
-                removeQueryParams(["embedType", "embedTabName"]);
-              }}>
-              <ArrowLeft className="mr-4 w-4" />
+            <button className="h-6 w-6" onClick={gotoEmbedTypeSelectionState}>
+              <Icon name="arrow-left" className="mr-4 w-4" />
             </button>
             {embed.title}
           </h3>
           <h4 className="text-subtle mb-6 text-sm font-normal">{embed.subtitle}</h4>
           {eventTypeData?.eventType && embedType === "email" ? (
-            <EmailEmbed eventType={eventTypeData?.eventType} username={data?.user.username as string} />
+            <EmailEmbed
+              eventType={eventTypeData?.eventType}
+              username={teamSlug ?? (data?.user.username as string)}
+              userSettingsTimezone={userSettings?.timeZone}
+              orgSlug={data?.user?.org?.slug}
+              isTeamEvent={!!teamSlug}
+              selectedDuration={selectedDuration}
+              setSelectedDuration={setSelectedDuration}
+            />
           ) : (
             <div className="flex flex-col">
               <div className={classNames("font-medium", embedType === "element-click" ? "hidden" : "")}>
@@ -892,7 +1111,7 @@ const EmbedTypeCodeAndPreviewDialogContent = ({
                   <CollapsibleContent>
                     <div className="text-sm">
                       <Label className="mb-6">
-                        <div className="mb-2">Theme</div>
+                        <div className="mb-2">EmbedTheme</div>
                         <Select
                           className="w-full"
                           defaultValue={ThemeOptions[0]}
@@ -907,6 +1126,27 @@ const EmbedTypeCodeAndPreviewDialogContent = ({
                             setPreviewState((previewState) => {
                               return {
                                 ...previewState,
+                                inline: {
+                                  ...previewState.inline,
+                                  config: {
+                                    ...(previewState.inline.config ?? {}),
+                                    theme: option.value,
+                                  },
+                                },
+                                floatingPopup: {
+                                  ...previewState.floatingPopup,
+                                  config: {
+                                    ...(previewState.floatingPopup.config ?? {}),
+                                    theme: option.value,
+                                  },
+                                },
+                                elementClick: {
+                                  ...previewState.elementClick,
+                                  config: {
+                                    ...(previewState.elementClick.config ?? {}),
+                                    theme: option.value,
+                                  },
+                                },
                                 theme: option.value,
                               };
                             });
@@ -931,7 +1171,8 @@ const EmbedTypeCodeAndPreviewDialogContent = ({
                         </div>
                       ) : null}
                       {[
-                        { name: "brandColor", title: "Brand Color" },
+                        { name: "brandColor", title: "light_brand_color" },
+                        { name: "darkBrandColor", title: "dark_brand_color" },
                         // { name: "lightColor", title: "Light Color" },
                         // { name: "lighterColor", title: "Lighter Color" },
                         // { name: "lightestColor", title: "Lightest Color" },
@@ -939,12 +1180,12 @@ const EmbedTypeCodeAndPreviewDialogContent = ({
                         // { name: "medianColor", title: "Median Color" },
                       ].map((palette) => (
                         <Label key={palette.name} className="mb-6">
-                          <div className="mb-2">{palette.title}</div>
+                          <div className="mb-2">{t(palette.title)}</div>
                           <div className="w-full">
                             <ColorPicker
                               popoverAlign="start"
                               container={dialogContentRef?.current ?? undefined}
-                              defaultValue="#000000"
+                              defaultValue={paletteDefaultValue(palette.name)}
                               onChange={(color) => {
                                 addToPalette({
                                   [palette.name as keyof (typeof previewState)["palette"]]: color,
@@ -954,34 +1195,33 @@ const EmbedTypeCodeAndPreviewDialogContent = ({
                           </div>
                         </Label>
                       ))}
-                      {isBookerLayoutsEnabled && (
-                        <Label className="mb-6">
-                          <div className="mb-2">{t("layout")}</div>
-                          <Select
-                            className="w-full"
-                            defaultValue={layoutOptions[0]}
-                            onChange={(option) => {
-                              if (!option) {
-                                return;
-                              }
-                              setPreviewState((previewState) => {
-                                const config = {
-                                  ...(previewState.floatingPopup.config ?? {}),
-                                  layout: option.value,
-                                };
-                                return {
-                                  ...previewState,
-                                  floatingPopup: {
-                                    config,
-                                  },
-                                  layout: option.value,
-                                };
-                              });
-                            }}
-                            options={layoutOptions}
-                          />
-                        </Label>
-                      )}
+                      <Label className="mb-6">
+                        <div className="mb-2">{t("layout")}</div>
+                        <Select
+                          className="w-full"
+                          defaultValue={layoutOptions[0]}
+                          onChange={(option) => {
+                            if (!option) {
+                              return;
+                            }
+                            setPreviewState((previewState) => {
+                              const config = {
+                                ...(previewState.floatingPopup.config ?? {}),
+                                layout: option.value,
+                              };
+                              return {
+                                ...previewState,
+                                floatingPopup: {
+                                  ...previewState.floatingPopup,
+                                  config,
+                                },
+                                layout: option.value,
+                              };
+                            });
+                          }}
+                          options={layoutOptions}
+                        />
+                      </Label>
                     </div>
                   </CollapsibleContent>
                 </Collapsible>
@@ -989,97 +1229,105 @@ const EmbedTypeCodeAndPreviewDialogContent = ({
             </div>
           )}
         </div>
-        <div className="flex w-2/3 flex-col px-8 pt-8">
+        <div className="flex h-[95vh] w-2/3 flex-col px-8 pt-8">
           <HorizontalTabs
             data-testid="embed-tabs"
-            tabs={embedType === "email" ? parsedTabs.filter((tab) => tab.name === "Preview") : parsedTabs}
+            tabs={
+              embedType === "email"
+                ? parsedTabs.filter((tab) => tab.name === "Preview")
+                : parsedTabs.filter((tab) => tab.name !== "Preview")
+            }
             linkShallow
           />
-          {tabs.map((tab) => {
-            if (embedType !== "email") {
-              return (
-                <div
-                  key={tab.href}
-                  className={classNames(
-                    searchParams?.get("embedTabName") === tab.href.split("=")[1]
-                      ? "flex flex-grow flex-col"
-                      : "hidden"
-                  )}>
-                  <div className="flex h-[55vh] flex-grow flex-col">
-                    {tab.type === "code" ? (
-                      <tab.Component
-                        embedType={embedType}
-                        calLink={calLink}
-                        previewState={previewState}
-                        ref={refOfEmbedCodesRefs.current[tab.name]}
+          <>
+            <div className="flex h-full flex-col">
+              {tabs.map((tab) => {
+                if (embedType !== "email") {
+                  if (tab.name === "Preview") return null;
+                  return (
+                    <div
+                      key={tab.href}
+                      className={classNames(
+                        embedParams.embedTabName === tab.href.split("=")[1] ? "flex-1" : "hidden"
+                      )}>
+                      {tab.type === "code" && (
+                        <tab.Component
+                          namespace={namespace}
+                          embedType={embedType}
+                          calLink={calLink}
+                          previewState={previewState}
+                          ref={refOfEmbedCodesRefs.current[tab.name]}
+                        />
+                      )}
+                      <div
+                        className={embedParams.embedTabName === "embed-preview" ? "mt-2 block" : "hidden"}
                       />
-                    ) : (
-                      <tab.Component
-                        embedType={embedType}
+                    </div>
+                  );
+                }
+
+                if (embedType === "email" && (tab.name !== "Preview" || !eventTypeData?.eventType)) return;
+
+                return (
+                  <div key={tab.href} className={classNames("flex flex-grow flex-col")}>
+                    <div className="flex h-[55vh] flex-grow flex-col">
+                      <EmailEmbedPreview
+                        selectedDuration={selectedDuration}
                         calLink={calLink}
-                        previewState={previewState}
-                        ref={iframeRef}
+                        eventType={eventTypeData?.eventType}
+                        emailContentRef={emailContentRef}
+                        username={teamSlug ?? (data?.user.username as string)}
+                        userSettingsTimezone={userSettings?.timeZone}
+                        month={month as string}
+                        selectedDateAndTime={
+                          selectedDatesAndTimes
+                            ? selectedDatesAndTimes[eventTypeData?.eventType.slug as string]
+                            : {}
+                        }
                       />
-                    )}
+                    </div>
+                    <div className={embedParams.embedTabName === "embed-preview" ? "mt-2 block" : "hidden"} />
                   </div>
-                  <div
-                    className={
-                      searchParams?.get("embedTabName") === "embed-preview" ? "mt-2 block" : "hidden"
-                    }
-                  />
-                  <DialogFooter className="mt-10 flex-row-reverse gap-x-2" showDivider>
-                    <DialogClose />
-                    {tab.type === "code" ? (
-                      <Button
-                        type="submit"
-                        onClick={() => {
-                          const currentTabCodeEl = refOfEmbedCodesRefs.current[tab.name].current;
-                          if (!currentTabCodeEl) {
-                            return;
-                          }
-                          navigator.clipboard.writeText(currentTabCodeEl.value);
-                          showToast(t("code_copied"), "success");
-                        }}>
-                        {t("copy_code")}
-                      </Button>
-                    ) : null}
-                  </DialogFooter>
-                </div>
-              );
-            }
+                );
+              })}
 
-            if (embedType === "email" && (tab.name !== "Preview" || !eventTypeData?.eventType)) return;
-
-            return (
-              <div key={tab.href} className={classNames("flex flex-grow flex-col")}>
-                <div className="flex h-[55vh] flex-grow flex-col">
-                  <EmailEmbedPreview
-                    eventType={eventTypeData?.eventType}
-                    emailContentRef={emailContentRef}
-                    username={data?.user.username as string}
-                    month={month as string}
-                    selectedDateAndTime={
-                      selectedDatesAndTimes
-                        ? selectedDatesAndTimes[eventTypeData?.eventType.slug as string]
-                        : {}
-                    }
+              {embedType !== "email" && previewTab && (
+                <div className="flex-1">
+                  <previewTab.Component
+                    namespace={namespace}
+                    embedType={embedType}
+                    calLink={calLink}
+                    previewState={previewState}
+                    ref={iframeRef}
                   />
                 </div>
-                <div
-                  className={searchParams?.get("embedTabName") === "embed-preview" ? "mt-2 block" : "hidden"}
-                />
-                <DialogFooter className="mt-10 flex-row-reverse gap-x-2" showDivider>
-                  <DialogClose />
-                  <Button
-                    onClick={() => {
-                      handleCopyEmailText();
-                    }}>
-                    {embedType === "email" ? t("copy") : t("copy_code")}
-                  </Button>
-                </DialogFooter>
-              </div>
-            );
-          })}
+              )}
+            </div>
+            <DialogFooter className="mt-10 flex-row-reverse gap-x-2" showDivider>
+              <DialogClose />
+              <Button
+                type="submit"
+                onClick={() => {
+                  if (embedType === "email") {
+                    handleCopyEmailText();
+                  } else {
+                    const currentTabHref = embedParams.embedTabName;
+                    const currentTabName = tabs.find(
+                      (tab) => tab.href === `embedTabName=${currentTabHref}`
+                    )?.name;
+                    if (!currentTabName) return;
+                    const currentTabCodeEl = refOfEmbedCodesRefs.current[currentTabName].current;
+                    if (!currentTabCodeEl) {
+                      return;
+                    }
+                    navigator.clipboard.writeText(currentTabCodeEl.value);
+                    showToast(t("code_copied"), "success");
+                  }
+                }}>
+                {embedType === "email" ? t("copy") : t("copy_code")}
+              </Button>
+            </DialogFooter>
+          </>
         </div>
       </div>
     </DialogContent>
@@ -1090,24 +1338,42 @@ export const EmbedDialog = ({
   types,
   tabs,
   eventTypeHideOptionDisabled,
-}: {
-  types: EmbedTypes;
-  tabs: EmbedTabs;
-  eventTypeHideOptionDisabled: boolean;
-}) => {
-  const searchParams = useSearchParams();
-  const embedUrl = searchParams?.get("embedUrl") as string;
+  defaultBrandColor,
+  noQueryParamMode = false,
+}: EmbedDialogProps) => {
+  const { embedState, setEmbedState } = useEmbedDialogCtx(noQueryParamMode);
+  const embedParams = useEmbedParams(noQueryParamMode);
+
+  const handleDialogClose = () => {
+    if (noQueryParamMode) {
+      setEmbedState(null);
+    }
+  };
+
   return (
-    <Dialog name="embed" clearQueryParamsOnClose={queryParamsForDialog}>
-      {!searchParams?.get("embedType") ? (
-        <ChooseEmbedTypesDialogContent types={types} />
+    <Dialog
+      {...(noQueryParamMode
+        ? {
+            open: embedState !== null,
+            onOpenChange: (open) => !open && handleDialogClose(),
+          }
+        : {
+            // Must not set name when noQueryParam mode as required by Dialog component
+            name: "embed",
+            clearQueryParamsOnClose: queryParamsForDialog,
+          })}>
+      {!embedParams.embedType ? (
+        <ChooseEmbedTypesDialogContent types={types} noQueryParamMode={noQueryParamMode} />
       ) : (
         <EmbedTypeCodeAndPreviewDialogContent
-          embedType={searchParams?.get("embedType") as EmbedType}
-          embedUrl={embedUrl}
+          embedType={embedParams.embedType as EmbedType}
+          embedUrl={embedParams.embedUrl}
+          namespace={embedParams.namespace}
           tabs={tabs}
           types={types}
           eventTypeHideOptionDisabled={eventTypeHideOptionDisabled}
+          defaultBrandColor={defaultBrandColor}
+          noQueryParamMode={noQueryParamMode}
         />
       )}
     </Dialog>
@@ -1116,26 +1382,32 @@ export const EmbedDialog = ({
 
 type EmbedButtonProps<T> = {
   embedUrl: string;
+  namespace: string;
   children?: React.ReactNode;
   className?: string;
   as?: T;
   eventId?: number;
+  noQueryParamMode?: boolean;
 };
 
-export const EmbedButton = <T extends React.ElementType>({
+export const EmbedButton = <T extends React.ElementType = typeof Button>({
   embedUrl,
   children,
   className = "",
   as,
   eventId,
+  namespace,
+  noQueryParamMode,
   ...props
 }: EmbedButtonProps<T> & React.ComponentPropsWithoutRef<T>) => {
-  const { goto } = useRouterHelpers();
+  const { gotoState } = useEmbedGoto(noQueryParamMode);
   className = classNames("hidden lg:inline-flex", className);
+
   const openEmbedModal = () => {
-    goto({
+    gotoState({
       dialog: "embed",
       eventId: eventId ? eventId.toString() : "",
+      namespace,
       embedUrl,
     });
   };
@@ -1148,9 +1420,7 @@ export const EmbedButton = <T extends React.ElementType>({
       data-test-embed-url={embedUrl}
       data-testid="embed"
       type="button"
-      onClick={() => {
-        openEmbedModal();
-      }}>
+      onClick={openEmbedModal}>
       {children}
     </Component>
   );

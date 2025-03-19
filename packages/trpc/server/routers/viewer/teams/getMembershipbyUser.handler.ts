@@ -1,5 +1,5 @@
 import { prisma } from "@calcom/prisma";
-import type { TrpcSessionUser } from "@calcom/trpc/server/trpc";
+import type { TrpcSessionUser } from "@calcom/trpc/server/types";
 
 import { TRPCError } from "@trpc/server";
 
@@ -29,3 +29,5 @@ export const getMembershipbyUserHandler = async ({ ctx, input }: GetMembershipby
     },
   });
 };
+
+export default getMembershipbyUserHandler;

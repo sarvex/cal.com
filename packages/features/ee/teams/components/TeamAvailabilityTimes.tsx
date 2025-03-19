@@ -1,3 +1,9 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment */
+// @ts-nocheck
+
+/* eslint-enable @typescript-eslint/ban-ts-comment */
+// TODO: Currently this file is not type checked as it's deprecated
+//       it must be refactored if we want to restore TeamAvailability
 import classNames from "classnames";
 import React from "react";
 import type { ITimezone } from "react-timezone-select";
@@ -22,7 +28,7 @@ interface Props {
 export default function TeamAvailabilityTimes(props: Props) {
   const { t } = useLocale();
 
-  const { data, isLoading } = trpc.viewer.teams.getMemberAvailability.useQuery(
+  const { data, isPending } = trpc.viewer.teams.getMemberAvailability.useQuery(
     {
       teamId: props.teamId,
       memberId: props.memberId,
@@ -35,7 +41,7 @@ export default function TeamAvailabilityTimes(props: Props) {
     }
   );
 
-  const slots = !isLoading
+  const slots = !isPending
     ? getSlots({
         frequency: props.frequency,
         inviteeDate: props.selectedDate,
@@ -50,13 +56,13 @@ export default function TeamAvailabilityTimes(props: Props) {
   return (
     <div className={classNames("min-w-60 flex-grow pl-0", props.className)}>
       {props.HeaderComponent}
-      {isLoading && slots.length === 0 && <SkeletonLoader />}
-      {!isLoading && slots.length === 0 ? (
+      {isPending && slots.length === 0 && <SkeletonLoader />}
+      {!isPending && slots.length === 0 ? (
         <div className="flex flex-col items-center justify-center pt-4">
           <span className="text-subtle text-sm">{t("no_available_slots")}</span>
         </div>
       ) : (
-        <>{!isLoading && <p className="text-default mb-3 text-sm">{t("time_available")}</p>}</>
+        <>{!isPending && <p className="text-default mb-3 text-sm">{t("time_available")}</p>}</>
       )}
       <div className="max-h-[390px] overflow-scroll">
         {slots.map((slot) => (

@@ -1,6 +1,6 @@
 import type { NextApiRequest } from "next";
 
-import { defaultResponder } from "@calcom/lib/server";
+import { defaultResponder } from "@calcom/lib/server/defaultResponder";
 
 import checkSession from "../../_utils/auth";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
@@ -11,16 +11,17 @@ export async function getHandler(req: NextApiRequest) {
   const session = checkSession(req);
   const slug = appConfig.slug;
   const appType = appConfig.type;
+  const returnTo = req.query?.returnTo;
 
   await checkInstalled(slug, session.user.id);
   await createDefaultInstallation({
     appType,
-    userId: session.user.id,
+    user: session.user,
     slug,
     key: {},
   });
 
-  return { url: getInstalledAppPath({ variant: "conferencing", slug: "whereby" }) };
+  return { url: returnTo ?? getInstalledAppPath({ variant: "conferencing", slug: "whereby" }) };
 }
 
 export default defaultResponder(getHandler);

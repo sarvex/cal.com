@@ -1,10 +1,11 @@
-import type { GroupBase, InputProps, OptionProps } from "react-select";
+import type { GroupBase, InputProps, OptionProps, ControlProps } from "react-select";
 import { components as reactSelectComponents } from "react-select";
 
-import { classNames } from "@calcom/lib";
+import classNames from "@calcom/ui/classNames";
 
-import { UpgradeTeamsBadge, UpgradeOrgsBadge } from "../../badge";
-import { Check } from "../../icon";
+import { UpgradeTeamsBadge } from "../../badge";
+import { Icon } from "../../icon";
+import type { SelectProps } from "./types";
 
 export const InputComponent = <
   Option,
@@ -16,9 +17,9 @@ export const InputComponent = <
 }: InputProps<Option, IsMulti, Group>) => {
   return (
     <reactSelectComponents.Input
-      // disables our default form focus hightlight on the react-select input element
+      // disables our default form focus highlight on the react-select input element
       inputClassName={classNames(
-        "focus:ring-0 focus:ring-offset-0 dark:!text-darkgray-900 !text-emphasis",
+        "focus:ring-0 focus:ring-offset-0 !text-default dark:!text-white",
         inputClassName
       )}
       {...props}
@@ -30,7 +31,6 @@ type ExtendedOption = {
   value: string | number;
   label: string;
   needsTeamsUpgrade?: boolean;
-  needsOrgsUpgrade?: boolean;
 };
 
 export const OptionComponent = <
@@ -41,22 +41,37 @@ export const OptionComponent = <
   ...props
 }: OptionProps<Option, IsMulti, Group>) => {
   return (
-    // This gets styled in the select classNames prop now - handles overrides with styles vs className here doesnt
+    // This gets styled in the select classNames prop now - handles overrides with styles vs className here doesn't
     <reactSelectComponents.Option {...props}>
       <div className="flex">
         <span className="mr-auto" data-testid={`select-option-${(props as unknown as ExtendedOption).value}`}>
           {props.label || <>&nbsp;</>}
         </span>
         {(props.data as unknown as ExtendedOption).needsTeamsUpgrade ? (
-          <UpgradeTeamsBadge />
-        ) : (props.data as unknown as ExtendedOption).needsOrgsUpgrade ? (
-          <UpgradeOrgsBadge />
+          <UpgradeTeamsBadge checkForActiveStatus={true} />
         ) : (
           <></>
         )}
-        {props.isSelected && <Check className="ml-2 h-4 w-4" />}
+        {props.isSelected && <Icon name="check" className="ml-2 h-4 w-4" />}
       </div>
     </reactSelectComponents.Option>
+  );
+};
+
+export const ControlComponent = <
+  Option,
+  IsMulti extends boolean,
+  Group extends GroupBase<Option> = GroupBase<Option>
+>(
+  controlProps: ControlProps<Option, IsMulti, Group> & {
+    selectProps: SelectProps<Option, IsMulti, Group>;
+  }
+) => {
+  const dataTestId = controlProps.selectProps["data-testid"] ?? "select-control";
+  return (
+    <span data-testid={dataTestId}>
+      <reactSelectComponents.Control {...controlProps} />
+    </span>
   );
 };
 

@@ -1,8 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import type { UnitTypeLongPlural } from "dayjs";
+import type { TFunction } from "next-i18next";
 import z, { ZodNullable, ZodObject, ZodOptional } from "zod";
-
-/* eslint-disable no-underscore-dangle */
 import type {
   AnyZodObject,
   objectInputType,
@@ -18,7 +17,9 @@ import dayjs from "@calcom/dayjs";
 import { isPasswordValid } from "@calcom/features/auth/lib/isPasswordValid";
 import type { FieldType as FormBuilderFieldType } from "@calcom/features/form-builder/schema";
 import { fieldsSchema as formBuilderFieldsSchema } from "@calcom/features/form-builder/schema";
-import { isSupportedTimeZone } from "@calcom/lib/date-fns";
+import { emailSchema as emailRegexSchema, emailRegex } from "@calcom/lib/emailSchema";
+import type { IntervalLimit } from "@calcom/lib/intervalLimits/intervalLimitSchema";
+import { zodAttributesQueryValue } from "@calcom/lib/raqb/zod";
 import { slugify } from "@calcom/lib/slugify";
 import { EventTypeCustomInputType } from "@calcom/prisma/enums";
 
@@ -58,6 +59,20 @@ export const bookerLayouts = z
   })
   .nullable();
 
+export const orgOnboardingInvitedMembersSchema = z.array(
+  z.object({ email: z.string().email(), name: z.string().optional() })
+);
+
+export const orgOnboardingTeamsSchema = z.array(
+  z.object({
+    id: z.number(),
+    name: z.string(),
+    isBeingMigrated: z.boolean(),
+    // "slug" is null for new teams
+    slug: z.string().nullable(),
+  })
+);
+
 export const defaultBookerLayoutSettings = {
   defaultLayout: BookerLayouts.MONTH_VIEW,
   // if the user has no explicit layouts set (not in user profile and not in event settings), all layouts are enabled.
@@ -68,44 +83,68 @@ export type BookerLayoutSettings = z.infer<typeof bookerLayouts>;
 
 export const RequiresConfirmationThresholdUnits: z.ZodType<UnitTypeLongPlural> = z.enum(["hours", "minutes"]);
 
-export const EventTypeMetaDataSchema = z
-  .object({
-    smartContractAddress: z.string().optional(),
-    blockchainId: z.number().optional(),
-    multipleDuration: z.number().array().optional(),
-    giphyThankYouPage: z.string().optional(),
-    apps: z.object(appDataSchemas).partial().optional(),
-    additionalNotesRequired: z.boolean().optional(),
-    disableSuccessPage: z.boolean().optional(),
-    disableStandardEmails: z
-      .object({
-        confirmation: z
-          .object({
-            host: z.boolean().optional(),
-            attendee: z.boolean().optional(),
-          })
-          .optional(),
-      })
-      .optional(),
-    managedEventConfig: z
-      .object({
-        unlockedFields: z.custom<{ [k in keyof Omit<Prisma.EventTypeSelect, "id">]: true }>().optional(),
-      })
-      .optional(),
-    requiresConfirmationThreshold: z
-      .object({
-        time: z.number(),
-        unit: RequiresConfirmationThresholdUnits,
-      })
-      .optional(),
-    config: z
-      .object({
-        useHostSchedulesForTeamEvent: z.boolean().optional(),
-      })
-      .optional(),
-    bookerLayouts: bookerLayouts.optional(),
+export const EventTypeAppMetadataSchema = z.object(appDataSchemas).partial();
+export const eventTypeAppMetadataOptionalSchema = EventTypeAppMetadataSchema.optional();
+
+const _eventTypeMetaDataSchemaWithoutApps = z.object({
+  smartContractAddress: z.string().optional(),
+  blockchainId: z.number().optional(),
+  multipleDuration: z.number().array().optional(),
+  giphyThankYouPage: z.string().optional(),
+  additionalNotesRequired: z.boolean().optional(),
+  disableSuccessPage: z.boolean().optional(),
+  disableStandardEmails: z
+    .object({
+      all: z
+        .object({
+          host: z.boolean().optional(),
+          attendee: z.boolean().optional(),
+        })
+        .optional(),
+      confirmation: z
+        .object({
+          host: z.boolean().optional(),
+          attendee: z.boolean().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+  managedEventConfig: z
+    .object({
+      unlockedFields: z.custom<{ [k in keyof Omit<Prisma.EventTypeSelect, "id">]: true }>().optional(),
+    })
+    .optional(),
+  requiresConfirmationThreshold: z
+    .object({
+      time: z.number(),
+      unit: RequiresConfirmationThresholdUnits,
+    })
+    .optional(),
+  config: z
+    .object({
+      useHostSchedulesForTeamEvent: z.boolean().optional(),
+    })
+    .optional(),
+  bookerLayouts: bookerLayouts.optional(),
+});
+
+export const eventTypeMetaDataSchemaWithUntypedApps = _eventTypeMetaDataSchemaWithoutApps.merge(
+  z.object({
+    apps: z.unknown().optional(),
   })
+);
+
+export const EventTypeMetaDataSchema = eventTypeMetaDataSchemaWithUntypedApps.nullable();
+export const eventTypeMetaDataSchemaWithoutApps = _eventTypeMetaDataSchemaWithoutApps.nullable();
+export const eventTypeMetaDataSchemaWithTypedApps = _eventTypeMetaDataSchemaWithoutApps
+  .merge(
+    z.object({
+      apps: eventTypeAppMetadataOptionalSchema,
+    })
+  )
   .nullable();
+
+export type EventTypeMetadata = z.infer<typeof EventTypeMetaDataSchema>;
 
 export const eventTypeBookingFields = formBuilderFieldsSchema;
 export const BookingFieldTypeEnum = eventTypeBookingFields.element.shape.type.Enum;
@@ -117,6 +156,7 @@ export type BookingFieldType = FormBuilderFieldType;
 export const bookingResponses = z
   .object({
     email: z.string(),
+    attendeePhoneNumber: z.string().optional(),
     //TODO: Why don't we move name out of bookingResponses and let it be handled like user fields?
     name: z.union([
       z.string(),
@@ -178,14 +218,16 @@ export const iso8601 = z.string().transform((val, ctx) => {
   return d;
 });
 
-export const intervalLimitsType = z
+export const eventTypeColor = z
   .object({
-    PER_DAY: z.number().optional(),
-    PER_WEEK: z.number().optional(),
-    PER_MONTH: z.number().optional(),
-    PER_YEAR: z.number().optional(),
+    lightEventTypeColor: z.string(),
+    darkEventTypeColor: z.string(),
   })
   .nullable();
+
+export type IntervalLimitsType = IntervalLimit | null;
+
+export { intervalLimitsType } from "@calcom/lib/intervalLimits/intervalLimitSchema";
 
 export const eventTypeSlug = z.string().transform((val) => slugify(val.trim()));
 
@@ -205,24 +247,13 @@ export const stringOrNumber = z.union([
   z.number().int(),
 ]);
 
-export const stringToDayjs = z.string().transform((val) => dayjs(val));
+export const stringToDayjs = (val: string) => {
+  const matches = val.match(/([+-]\d{2}:\d{2})$/);
+  const timezone = matches ? matches[1] : "+00:00";
+  return dayjs(val).utcOffset(timezone);
+};
 
-export const bookingCreateBodySchema = z.object({
-  end: z.string().optional(),
-  eventTypeId: z.number(),
-  eventTypeSlug: z.string().optional(),
-  rescheduleUid: z.string().optional(),
-  recurringEventId: z.string().optional(),
-  start: z.string(),
-  timeZone: z.string().refine((value: string) => isSupportedTimeZone(value), { message: "Invalid timezone" }),
-  user: z.union([z.string(), z.array(z.string())]).optional(),
-  language: z.string(),
-  bookingUid: z.string().optional(),
-  metadata: z.record(z.string()),
-  hasHashedBookingLink: z.boolean().optional(),
-  hashedLink: z.string().nullish(),
-  seatReferenceUid: z.string().optional(),
-});
+export const stringToDayjsZod = z.string().transform(stringToDayjs);
 
 export const requiredCustomInputSchema = z.union([
   // string must be given & nonempty
@@ -231,61 +262,53 @@ export const requiredCustomInputSchema = z.union([
   z.boolean().refine((v) => v === true),
 ]);
 
-export type BookingCreateBody = z.input<typeof bookingCreateBodySchema>;
+const PlatformClientParamsSchema = z.object({
+  platformClientId: z.string().optional(),
+  platformRescheduleUrl: z.string().nullable().optional(),
+  platformCancelUrl: z.string().nullable().optional(),
+  platformBookingUrl: z.string().nullable().optional(),
+  platformBookingLocation: z.string().optional(),
+});
+
+export type PlatformClientParams = z.infer<typeof PlatformClientParamsSchema>;
 
 export const bookingConfirmPatchBodySchema = z.object({
   bookingId: z.number(),
   confirmed: z.boolean(),
   recurringEventId: z.string().optional(),
   reason: z.string().optional(),
+  emailsEnabled: z.boolean().default(true),
+  platformClientParams: PlatformClientParamsSchema.optional(),
 });
 
-// `responses` is merged with it during handleNewBooking call because `responses` schema is dynamic and depends on eventType
-export const extendedBookingCreateBody = bookingCreateBodySchema.merge(
-  z.object({
-    noEmail: z.boolean().optional(),
-    recurringCount: z.number().optional(),
-    allRecurringDates: z.string().array().optional(),
-    currentRecurringIndex: z.number().optional(),
-    appsStatus: z
-      .array(
-        z.object({
-          appName: z.string(),
-          success: z.number(),
-          failures: z.number(),
-          type: z.string(),
-          errors: z.string().array(),
-          warnings: z.string().array().optional(),
-        })
-      )
-      .optional(),
-  })
-);
-
-// It has only the legacy props that are part of `responses` now. The API can still hit old props
-export const bookingCreateSchemaLegacyPropsForApi = z.object({
-  email: z.string(),
-  name: z.string(),
-  guests: z.array(z.string()).optional(),
-  notes: z.string().optional(),
-  location: z.string(),
-  smsReminderNumber: z.string().optional().nullable(),
-  rescheduleReason: z.string().optional(),
-  customInputs: z.array(z.object({ label: z.string(), value: z.union([z.string(), z.boolean()]) })),
-});
-
-// This is the schema that is used for the API. It has all the legacy props that are part of `responses` now.
-export const bookingCreateBodySchemaForApi = extendedBookingCreateBody.merge(
-  bookingCreateSchemaLegacyPropsForApi.partial()
-);
-
-export const schemaBookingCancelParams = z.object({
+export const bookingCancelSchema = z.object({
   id: z.number().optional(),
   uid: z.string().optional(),
+  // note(Lauris): allRemainingBookings will cancel all bookings that have start time greater than this moment.
   allRemainingBookings: z.boolean().optional(),
+  // note(Lauris): cancelSubsequentBookings will cancel all bookings after one specified by id or uid.
+  cancelSubsequentBookings: z.boolean().optional(),
   cancellationReason: z.string().optional(),
   seatReferenceUid: z.string().optional(),
+  cancelledBy: z.string().email({ message: "Invalid email" }).optional(),
+  internalNote: z
+    .object({
+      id: z.number(),
+      name: z.string(),
+      cancellationReason: z.string().optional().nullable(),
+    })
+    .optional()
+    .nullable(),
 });
+
+export const bookingCancelAttendeeSeatSchema = z.object({
+  seatReferenceUid: z.string(),
+});
+
+export const bookingCancelInput = bookingCancelSchema.refine(
+  (data) => !!data.id || !!data.uid,
+  "At least one of the following required: 'id', 'uid'."
+);
 
 export const vitalSettingsUpdateSchema = z.object({
   connected: z.boolean().optional(),
@@ -296,11 +319,17 @@ export const vitalSettingsUpdateSchema = z.object({
 export const createdEventSchema = z
   .object({
     id: z.string(),
+    thirdPartyRecurringEventId: z.string(),
     password: z.union([z.string(), z.undefined()]),
     onlineMeetingUrl: z.string().nullable(),
     iCalUID: z.string().optional(),
   })
   .passthrough();
+
+const schemaDefaultConferencingApp = z.object({
+  appSlug: z.string().default("daily-video").optional(),
+  appLink: z.string().optional(),
+});
 
 export const userMetadata = z
   .object({
@@ -309,26 +338,58 @@ export const userMetadata = z
     vitalSettings: vitalSettingsUpdateSchema.optional(),
     isPremium: z.boolean().optional(),
     sessionTimeout: z.number().optional(), // Minutes
-    defaultConferencingApp: z
+    defaultConferencingApp: schemaDefaultConferencingApp.optional(),
+    defaultBookerLayouts: bookerLayouts.optional(),
+    emailChangeWaitingForVerification: z
+      .string()
+      .transform((data) => data.toLowerCase())
+      .optional(),
+    migratedToOrgFrom: z
       .object({
-        appSlug: z.string().default("daily-video").optional(),
-        appLink: z.string().optional(),
+        username: z.string().or(z.null()).optional(),
+        lastMigrationTime: z.string().optional(),
+        reverted: z.boolean().optional(),
+        revertTime: z.string().optional(),
       })
       .optional(),
-    defaultBookerLayouts: bookerLayouts.optional(),
   })
   .nullable();
 
+export type DefaultConferencingApp = z.infer<typeof schemaDefaultConferencingApp>;
+
+export const orgSettingsSchema = z
+  .object({
+    isOrganizationVerified: z.boolean().optional(),
+    isOrganizationConfigured: z.boolean().optional(),
+    isAdminReviewed: z.boolean().optional(),
+    orgAutoAcceptEmail: z.string().optional(),
+    isAdminAPIEnabled: z.boolean().optional(),
+  })
+  .nullable();
+export type userMetadataType = z.infer<typeof userMetadata>;
+
+export enum BillingPeriod {
+  MONTHLY = "MONTHLY",
+  ANNUALLY = "ANNUALLY",
+}
+
 export const teamMetadataSchema = z
   .object({
-    requestedSlug: z.string(),
+    requestedSlug: z.string().or(z.null()),
     paymentId: z.string(),
     subscriptionId: z.string().nullable(),
     subscriptionItemId: z.string().nullable(),
-    isOrganization: z.boolean().nullable(),
-    isOrganizationVerified: z.boolean().nullable(),
-    isOrganizationConfigured: z.boolean().nullable(),
-    orgAutoAcceptEmail: z.string().nullable(),
+    orgSeats: z.number().nullable(),
+    orgPricePerSeat: z.number().nullable(),
+    migratedToOrgFrom: z
+      .object({
+        teamSlug: z.string().or(z.null()).optional(),
+        lastMigrationTime: z.string().optional(),
+        reverted: z.boolean().optional(),
+        lastRevertTime: z.string().optional(),
+      })
+      .optional(),
+    billingPeriod: z.nativeEnum(BillingPeriod).optional(),
   })
   .partial()
   .nullable();
@@ -338,7 +399,8 @@ export const bookingMetadataSchema = z
     videoCallUrl: z.string().optional(),
   })
   .and(z.record(z.string()))
-  .nullable();
+  .nullable()
+  .describe("BookingMetadata");
 
 export const customInputOptionSchema = z.array(
   z.object({
@@ -360,15 +422,17 @@ export const customInputSchema = z.object({
 
 export type CustomInputSchema = z.infer<typeof customInputSchema>;
 
-export const recordingItemSchema = z.object({
-  id: z.string(),
-  room_name: z.string(),
-  start_ts: z.number(),
-  status: z.string(),
-  max_participants: z.number(),
-  duration: z.number(),
-  share_token: z.string(),
-});
+export const recordingItemSchema = z
+  .object({
+    id: z.string(),
+    room_name: z.string(),
+    start_ts: z.number(),
+    status: z.string(),
+    max_participants: z.number().optional(),
+    duration: z.number(),
+    share_token: z.string(),
+  })
+  .passthrough();
 
 export const recordingItemsSchema = z.array(recordingItemSchema);
 
@@ -402,7 +466,12 @@ export const successRedirectUrl = z
 
 export const RoutingFormSettings = z
   .object({
+    // Applicable only for User Forms
     emailOwnerOnSubmission: z.boolean(),
+
+    // Applicable only for Team Forms
+    sendUpdatesTo: z.array(z.number()).optional(),
+    sendToAll: z.boolean().optional(),
   })
   .nullable();
 
@@ -548,6 +617,10 @@ export const downloadLinkSchema = z.object({
 export const allManagedEventTypeProps: { [k in keyof Omit<Prisma.EventTypeSelect, "id">]: true } = {
   title: true,
   description: true,
+  isInstantEvent: true,
+  instantMeetingParameters: true,
+  instantMeetingExpiryTimeOffsetInSeconds: true,
+  aiPhoneCallConfig: true,
   currency: true,
   periodDays: true,
   position: true,
@@ -562,10 +635,14 @@ export const allManagedEventTypeProps: { [k in keyof Omit<Prisma.EventTypeSelect
   customInputs: true,
   disableGuests: true,
   requiresConfirmation: true,
+  canSendCalVideoTranscriptionEmails: true,
+  requiresConfirmationForFreeEmail: true,
+  requiresConfirmationWillBlockSlot: true,
   eventName: true,
   metadata: true,
   children: true,
   hideCalendarNotes: true,
+  hideCalendarEventDetails: true,
   minimumBookingNotice: true,
   beforeEventBuffer: true,
   afterEventBuffer: true,
@@ -573,6 +650,7 @@ export const allManagedEventTypeProps: { [k in keyof Omit<Prisma.EventTypeSelect
   seatsPerTimeSlot: true,
   seatsShowAttendees: true,
   seatsShowAvailabilityCount: true,
+  forwardParamsSuccessRedirect: true,
   periodType: true,
   hashedLink: true,
   webhooks: true,
@@ -581,11 +659,20 @@ export const allManagedEventTypeProps: { [k in keyof Omit<Prisma.EventTypeSelect
   destinationCalendar: true,
   periodCountCalendarDays: true,
   bookingLimits: true,
+  onlyShowFirstAvailableSlot: true,
   slotInterval: true,
   scheduleId: true,
   workflows: true,
   bookingFields: true,
   durationLimits: true,
+  lockTimeZoneToggleOnBookingPage: true,
+  requiresBookerEmailVerification: true,
+  assignAllTeamMembers: true,
+  isRRWeightsEnabled: true,
+  eventTypeColor: true,
+  allowReschedulingPastBookings: true,
+  rescheduleWithSameRoundRobinHost: true,
+  maxLeadThreshold: true,
 };
 
 // All properties that are defined as unlocked based on all managed props
@@ -596,19 +683,20 @@ export const unlockedManagedEventTypeProps = {
   destinationCalendar: allManagedEventTypeProps.destinationCalendar,
 };
 
+export const emailSchema = emailRegexSchema;
+
 // The PR at https://github.com/colinhacks/zod/pull/2157 addresses this issue and improves email validation
 // I introduced this refinement(to be used with z.email()) as a short term solution until we upgrade to a zod
 // version that will include updates in the above PR.
 export const emailSchemaRefinement = (value: string) => {
-  const emailRegex = /^([A-Z0-9_+-]+\.?)*[A-Z0-9_+-]@([A-Z0-9][A-Z0-9-]*\.)+[A-Z]{2,}$/i;
   return emailRegex.test(value);
 };
 
 export const signupSchema = z.object({
-  username: z.string().refine((value) => !value.includes("+"), {
-    message: "String should not contain a plus symbol (+).",
-  }),
-  email: z.string().email(),
+  // Username is marked optional here because it's requirement depends on if it's the Organization invite or a team invite which isn't easily done in zod
+  // It's better handled beyond zod in `validateAndGetCorrectedUsernameAndEmail`
+  username: z.string().optional(),
+  email: z.string().regex(emailRegex, { message: "Invalid email" }),
   password: z.string().superRefine((data, ctx) => {
     const isStrict = false;
     const result = isPasswordValid(data, true, isStrict);
@@ -627,10 +715,31 @@ export const signupSchema = z.object({
 });
 
 export const ZVerifyCodeInputSchema = z.object({
-  email: z.string().email(),
+  email: emailSchema,
   code: z.string(),
 });
 
 export type ZVerifyCodeInputSchema = z.infer<typeof ZVerifyCodeInputSchema>;
 
 export const coerceToDate = z.coerce.date();
+export const getStringAsNumberRequiredSchema = (t: TFunction) =>
+  z.string().min(1, t("error_required_field")).pipe(z.coerce.number());
+
+export const bookingSeatDataSchema = z.object({
+  description: z.string().optional(),
+  responses: bookingResponses,
+});
+
+// Schema for decrypted service account key
+export const serviceAccountKeySchema = z
+  .object({
+    private_key: z.string(),
+    client_email: z.string().optional(),
+    client_id: z.string(),
+    tenant_id: z.string().optional(),
+  })
+  .passthrough();
+
+export type TServiceAccountKeySchema = z.infer<typeof serviceAccountKeySchema>;
+
+export const rrSegmentQueryValueSchema = zodAttributesQueryValue.nullish();

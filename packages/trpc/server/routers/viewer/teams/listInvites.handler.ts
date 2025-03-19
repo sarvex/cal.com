@@ -1,5 +1,5 @@
 import { prisma } from "@calcom/prisma";
-import type { TrpcSessionUser } from "@calcom/trpc/server/trpc";
+import type { TrpcSessionUser } from "@calcom/trpc/server/types";
 
 type ListInvitesOptions = {
   ctx: {
@@ -18,3 +18,5 @@ export const listInvitesHandler = async ({ ctx }: ListInvitesOptions) => {
     },
   });
 };
+
+export default listInvitesHandler;

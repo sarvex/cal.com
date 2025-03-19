@@ -1,12 +1,18 @@
+"use client";
+
 // eslint-disable-next-line no-restricted-imports
 import { noop } from "lodash";
 import { usePathname } from "next/navigation";
 import React, { useEffect, useState } from "react";
-import { Toaster } from "react-hot-toast";
+import { Toaster } from "sonner";
 
 import { APP_NAME } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { Button, SkeletonText, StepCard, Steps } from "@calcom/ui";
+
+import { Button } from "../components/button/Button";
+import { StepCard } from "../components/card/StepCard";
+import { Steps } from "../components/form/step/Steps";
+import { SkeletonText } from "../components/skeleton/Skeleton";
 
 export function WizardLayout({
   children,
@@ -29,9 +35,7 @@ export function WizardLayout({
   }, [pathname]);
 
   return (
-    <div
-      className="dark:bg-brand dark:text-brand-contrast text-emphasis min-h-screen"
-      data-testid="onboarding">
+    <div className="bg-default text-emphasis min-h-screen" data-testid="onboarding">
       <div>
         <Toaster position="bottom-right" />
       </div>
@@ -54,14 +58,14 @@ export function WizardLayout({
                   </>
                 )}
               </header>
-              <Steps maxSteps={maxSteps} currentStep={currentStep} navigateToStep={noop} />
+              <Steps maxSteps={maxSteps} currentStep={currentStep} nextStep={noop} />
             </div>
             <StepCard>{children}</StepCard>
           </div>
         </div>
         {isOptionalCallback && (
           <div className="mt-4 flex justify-center">
-            <Button color="minimal" onClick={isOptionalCallback}>
+            <Button data-testid="handle-later-button" color="minimal" onClick={isOptionalCallback}>
               {t("ill_do_this_later")}
             </Button>
           </div>

@@ -1,16 +1,6 @@
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import type { AppCategories } from "@calcom/prisma/enums";
-import type { LucideIcon } from "@calcom/ui/components/icon";
-import {
-  Calendar,
-  Video,
-  CreditCard,
-  Share2,
-  BarChart,
-  Grid,
-  Mail,
-  Contact,
-} from "@calcom/ui/components/icon";
+import type { IconName } from "@calcom/ui";
 
 function getHref(baseURL: string, category: string, useQueryParam: boolean) {
   const baseUrlParsed = new URL(baseURL, WEBAPP_URL);
@@ -21,7 +11,8 @@ function getHref(baseURL: string, category: string, useQueryParam: boolean) {
 type AppCategoryEntry = {
   name: AppCategories;
   href: string;
-  icon: LucideIcon;
+  icon: IconName;
+  "data-testid": string;
 };
 
 const getAppCategories = (baseURL: string, useQueryParam: boolean): AppCategoryEntry[] => {
@@ -31,42 +22,50 @@ const getAppCategories = (baseURL: string, useQueryParam: boolean): AppCategoryE
     {
       name: "analytics",
       href: getHref(baseURL, "analytics", useQueryParam),
-      icon: BarChart,
+      icon: "chart-bar",
+      "data-testid": "analytics",
     },
     {
       name: "automation",
       href: getHref(baseURL, "automation", useQueryParam),
-      icon: Share2,
+      icon: "share-2",
+      "data-testid": "automation",
     },
     {
       name: "calendar",
       href: getHref(baseURL, "calendar", useQueryParam),
-      icon: Calendar,
+      icon: "calendar",
+      "data-testid": "calendar",
     },
     {
       name: "conferencing",
       href: getHref(baseURL, "conferencing", useQueryParam),
-      icon: Video,
+      icon: "video",
+      "data-testid": "conferencing",
     },
     {
       name: "crm",
       href: getHref(baseURL, "crm", useQueryParam),
-      icon: Contact,
+      icon: "contact",
+      "data-testid": "crm",
     },
     {
       name: "messaging",
       href: getHref(baseURL, "messaging", useQueryParam),
-      icon: Mail,
+      icon: "mail",
+      "data-testid": "messaging",
     },
     {
       name: "payment",
       href: getHref(baseURL, "payment", useQueryParam),
-      icon: CreditCard,
+      icon: "credit-card",
+      "data-testid": "payment",
     },
     {
       name: "other",
       href: getHref(baseURL, "other", useQueryParam),
-      icon: Grid,
+      icon: "grid-3x3",
+      "data-testid": "other",
     },
   ];
 };

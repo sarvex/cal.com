@@ -4,7 +4,7 @@ import { PASSWORD_RESET_EXPIRY_HOURS } from "@calcom/features/auth/lib/passwordR
 import { getTranslation } from "@calcom/lib/server/i18n";
 import { prisma } from "@calcom/prisma";
 
-import type { TrpcSessionUser } from "../../../trpc";
+import type { TrpcSessionUser } from "../../../types";
 import type { TAdminPasswordResetSchema } from "./sendPasswordReset.schema";
 
 type GetOptions = {
@@ -14,7 +14,7 @@ type GetOptions = {
   input: TAdminPasswordResetSchema;
 };
 
-export const sendPasswordResetHandler = async ({ input }: GetOptions) => {
+const sendPasswordResetHandler = async ({ input }: GetOptions) => {
   const { userId } = input;
 
   const user = await prisma.user.findUnique({
@@ -57,3 +57,5 @@ export const sendPasswordResetHandler = async ({ input }: GetOptions) => {
     success: true,
   };
 };
+
+export default sendPasswordResetHandler;

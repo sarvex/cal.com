@@ -1,10 +1,12 @@
+"use client";
+
 import { useRouter } from "next/navigation";
-import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, useCallback } from "react";
 
 import type { Message } from "./embed";
 import { sdkActionManager } from "./sdk-event";
 import type { EmbedThemeConfig, UiConfig, EmbedNonStylesConfig, BookerLayouts, EmbedStyles } from "./types";
+import { useCompatSearchParams } from "./useCompatSearchParams";
 
 type SetStyles = React.Dispatch<React.SetStateAction<EmbedStyles>>;
 type setNonStylesConfig = React.Dispatch<React.SetStateAction<EmbedNonStylesConfig>>;
@@ -12,6 +14,7 @@ const enum EMBED_IFRAME_STATE {
   NOT_INITIALIZED,
   INITIALIZED,
 }
+
 /**
  * All types of config that are critical to be processed as soon as possible are provided as query params to the iframe
  */
@@ -23,6 +26,7 @@ export type PrefillAndIframeAttrsConfig = Record<string, string | string[] | Rec
 
   // TODO: It should have a dedicated prefill prop
   // prefill: {},
+  "flag.coep"?: "true" | "false";
 
   // TODO: Move layout and theme as nested props of ui as it makes it clear that these two can be configured using `ui` instruction as well any time.
   // ui: {layout; theme}
@@ -208,7 +212,7 @@ const useUrlChange = (callback: (newUrl: string) => void) => {
 };
 
 export const useEmbedTheme = () => {
-  const searchParams = useSearchParams();
+  const searchParams = useCompatSearchParams();
   const [theme, setTheme] = useState(
     embedStore.theme || (searchParams?.get("theme") as typeof embedStore.theme)
   );
@@ -224,7 +228,7 @@ export const useEmbedTheme = () => {
 
 /**
  * It serves following purposes
- * - Gives consistent values for ui config even after Soft Navigation. When a new React component mounts, it would ensure that the component get's the correct value of ui config
+ * - Gives consistent values for ui config even after Soft Navigation. When a new React component mounts, it would ensure that the component gets the correct value of ui config
  * - Ensures that all the components using useEmbedUiConfig are updated when ui config changes. It is done by maintaining a list of all non-stale setters.
  */
 export const useEmbedUiConfig = () => {
@@ -240,7 +244,7 @@ export const useEmbedUiConfig = () => {
   return uiConfig;
 };
 
-// TODO: Make it usable as an attribute directly instead of styles value. It would allow us to go beyond styles e.g. for debugging we can add a special attribute indentifying the element on which UI config has been applied
+// TODO: Make it usable as an attribute directly instead of styles value. It would allow us to go beyond styles e.g. for debugging we can add a special attribute identifying the element on which UI config has been applied
 export const useEmbedStyles = (elementName: keyof EmbedStyles) => {
   const [, setStyles] = useState<EmbedStyles>({});
 
@@ -330,7 +334,13 @@ export const useEmbedType = () => {
 };
 
 function unhideBody() {
-  document.body.style.visibility = "visible";
+  // Ensure that it stays visible and not reverted by React
+  runAsap(() => {
+    if (document.body.style.visibility !== "visible") {
+      document.body.style.visibility = "visible";
+    }
+    unhideBody();
+  });
 }
 
 // It is a map of methods that can be called by parent using doInIframe({method: "methodName", arg: "argument"})
@@ -482,7 +492,7 @@ function keepParentInformedAboutDimensionChanges() {
 
     // During first render let iframe tell parent that how much is the expected height to avoid scroll.
     // Parent would set the same value as the height of iframe which would prevent scroll.
-    // On subsequent renders, consider html height as the height of the iframe. If we don't do this, then if iframe get's bigger in height, it would never shrink
+    // On subsequent renders, consider html height as the height of the iframe. If we don't do this, then if iframe gets bigger in height, it would never shrink
     const iframeHeight = isFirstTime ? documentScrollHeight : contentHeight;
     const iframeWidth = isFirstTime ? documentScrollWidth : contentWidth;
     embedStore.parentInformedAboutContentHeight = true;
@@ -508,7 +518,10 @@ function keepParentInformedAboutDimensionChanges() {
   });
 }
 
-if (isBrowser) {
+function main() {
+  if (!isBrowser) {
+    return;
+  }
   log("Embed SDK loaded", { isEmbed: window?.isEmbed?.() || false });
   const url = new URL(document.URL);
   embedStore.theme = window?.getEmbedTheme?.();
@@ -523,6 +536,9 @@ if (isBrowser) {
   // If embed link is opened in top, and not in iframe. Let the page be visible.
   if (top === window) {
     unhideBody();
+    // We would want to avoid a situation where Cal.com embeds cal.com and then embed-iframe is in the top as well. In such case, we would want to avoid infinite loop of events being passed.
+    log("Embed SDK Skipped as we are in top");
+    return;
   }
 
   window.addEventListener("message", (e) => {
@@ -545,6 +561,7 @@ if (isBrowser) {
       document.getElementsByTagName("main")[0] ||
       document.documentElement;
     if (e.target.contains(mainElement)) {
+      // Because the iframe can take the entire width but the actual content could still be smaller and everything beyond that would be considered backdrop
       sdkActionManager?.fire("__closeIframe", {});
     }
   });
@@ -618,3 +635,5 @@ function connectPreloadedEmbed({ url }: { url: URL }) {
 const isPrerendering = () => {
   return new URL(document.URL).searchParams.get("prerender") === "true";
 };
+
+main();

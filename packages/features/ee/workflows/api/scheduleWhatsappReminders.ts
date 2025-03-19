@@ -1,20 +1,22 @@
 /* Schedule any workflow reminder that falls within 7 days for WHATSAPP */
-import type { NextApiRequest, NextApiResponse } from "next";
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 
 import dayjs from "@calcom/dayjs";
-import { defaultHandler } from "@calcom/lib/server";
 import { getTimeFormatStringFromUserTimeFormat } from "@calcom/lib/timeFormat";
 import prisma from "@calcom/prisma";
 import { WorkflowActions, WorkflowMethods } from "@calcom/prisma/enums";
 
 import { getWhatsappTemplateFunction } from "../lib/actionHelperFunctions";
-import * as twilio from "../lib/reminders/smsProviders/twilioProvider";
+import type { PartialWorkflowReminder } from "../lib/getWorkflowReminders";
+import { select } from "../lib/getWorkflowReminders";
+import * as twilio from "../lib/reminders/providers/twilioProvider";
 
-async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const apiKey = req.headers.authorization || req.query.apiKey;
+export async function handler(req: NextRequest) {
+  const apiKey = req.headers.get("authorization") || req.nextUrl.searchParams.get("apiKey");
+
   if (process.env.CRON_API_KEY !== apiKey) {
-    res.status(401).json({ message: "Not authenticated" });
-    return;
+    return NextResponse.json({ message: "Not authenticated" }, { status: 401 });
   }
 
   //delete all scheduled whatsapp reminders where scheduled date is past current date
@@ -28,7 +30,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
   });
 
   //find all unscheduled WHATSAPP reminders
-  const unscheduledReminders = await prisma.workflowReminder.findMany({
+  const unscheduledReminders = (await prisma.workflowReminder.findMany({
     where: {
       method: WorkflowMethods.WHATSAPP,
       scheduled: false,
@@ -36,27 +38,20 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
         lte: dayjs().add(7, "day").toISOString(),
       },
     },
-    include: {
-      workflowStep: true,
-      booking: {
-        include: {
-          eventType: true,
-          user: true,
-          attendees: true,
-        },
-      },
-    },
-  });
+    select,
+  })) as PartialWorkflowReminder[];
 
   if (!unscheduledReminders.length) {
-    res.json({ ok: true });
-    return;
+    return NextResponse.json({ ok: true });
   }
 
   for (const reminder of unscheduledReminders) {
     if (!reminder.workflowStep || !reminder.booking) {
       continue;
     }
+    const userId = reminder.workflowStep.workflow.userId;
+    const teamId = reminder.workflowStep.workflow.teamId;
+
     try {
       const sendTo =
         reminder.workflowStep.action === WorkflowActions.WHATSAPP_NUMBER
@@ -81,6 +76,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
       const templateFunction = getWhatsappTemplateFunction(reminder.workflowStep.template);
       const message = templateFunction(
         false,
+        reminder.booking.user?.locale || "en",
         reminder.workflowStep.action,
         getTimeFormatStringFromUserTimeFormat(reminder.booking.user?.timeFormat),
         reminder.booking?.startTime.toISOString() || "",
@@ -91,26 +87,32 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
       );
 
       if (message?.length && message?.length > 0 && sendTo) {
-        const scheduledSMS = await twilio.scheduleSMS(sendTo, message, reminder.scheduledDate, "", true);
+        const scheduledSMS = await twilio.scheduleSMS(
+          sendTo,
+          message,
+          reminder.scheduledDate,
+          "",
+          userId,
+          teamId,
+          true
+        );
 
-        await prisma.workflowReminder.update({
-          where: {
-            id: reminder.id,
-          },
-          data: {
-            scheduled: true,
-            referenceId: scheduledSMS.sid,
-          },
-        });
+        if (scheduledSMS) {
+          await prisma.workflowReminder.update({
+            where: {
+              id: reminder.id,
+            },
+            data: {
+              scheduled: true,
+              referenceId: scheduledSMS.sid,
+            },
+          });
+        }
       }
     } catch (error) {
       console.log(`Error scheduling WHATSAPP with error ${error}`);
     }
   }
 
-  res.status(200).json({ message: "WHATSAPP scheduled" });
+  return NextResponse.json({ message: "WHATSAPP scheduled" }, { status: 200 });
 }
-
-export default defaultHandler({
-  POST: Promise.resolve({ default: handler }),
-});

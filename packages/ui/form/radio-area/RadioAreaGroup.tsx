@@ -2,7 +2,7 @@ import { useId } from "@radix-ui/react-id";
 import * as RadioGroupPrimitive from "@radix-ui/react-radio-group";
 import type { ReactNode } from "react";
 
-import classNames from "@calcom/lib/classNames";
+import classNames from "@calcom/ui/classNames";
 
 type RadioAreaProps = RadioGroupPrimitive.RadioGroupItemProps & {
   children: ReactNode;
@@ -16,14 +16,14 @@ const RadioArea = ({ children, className, classNames: innerClassNames, ...props 
   return (
     <div
       className={classNames(
-        "border-subtle [&:has(input:checked)]:border-emphasis relative flex items-start rounded-md border",
+        "border-subtle [&:has(input:checked)]:border-emphasis relative flex items-start rounded-[10px] border ",
         className
       )}>
       <RadioGroupPrimitive.Item
         id={id}
         {...props}
         className={classNames(
-          "hover:bg-subtle border-default focus:ring-emphasis absolute left-3 top-[0.9rem] mt-0.5 h-4 w-4 flex-shrink-0 rounded-full border focus:ring-2",
+          "hover:bg-subtle disabled:hover:bg-default border-default focus:ring-emphasis absolute left-3 top-[0.9rem] mt-0.5 h-4 w-4 flex-shrink-0 rounded-full border transition focus:ring-2 disabled:cursor-not-allowed",
           props.disabled && "opacity-60"
         )}>
         <RadioGroupPrimitive.Indicator

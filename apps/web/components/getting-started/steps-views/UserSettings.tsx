@@ -5,12 +5,12 @@ import { z } from "zod";
 
 import dayjs from "@calcom/dayjs";
 import { useTimePreferences } from "@calcom/features/bookings/lib";
+import { TimezoneSelect } from "@calcom/features/components/timezone-select";
 import { FULL_NAME_LENGTH_MAX_LIMIT } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { telemetryEventTypes, useTelemetry } from "@calcom/lib/telemetry";
 import { trpc } from "@calcom/trpc/react";
-import { Button, TimezoneSelect } from "@calcom/ui";
-import { ArrowRight } from "@calcom/ui/components/icon";
+import { Button, Input } from "@calcom/ui";
 
 import { UsernameAvailabilityField } from "@components/ui/UsernameAvailability";
 
@@ -21,7 +21,7 @@ interface IUserSettingsProps {
 
 const UserSettings = (props: IUserSettingsProps) => {
   const { nextStep } = props;
-  const [user] = trpc.viewer.me.useSuspenseQuery();
+  const [user] = trpc.viewer.me.get.useSuspenseQuery();
   const { t } = useLocale();
   const { setTimezone: setSelectedTimeZone, timezone: selectedTimeZone } = useTimePreferences();
   const telemetry = useTelemetry();
@@ -49,7 +49,7 @@ const UserSettings = (props: IUserSettingsProps) => {
     telemetry.event(telemetryEventTypes.onboardingStarted);
   }, [telemetry]);
 
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const onSuccess = async () => {
     await utils.viewer.me.invalidate();
     nextStep();
@@ -76,7 +76,7 @@ const UserSettings = (props: IUserSettingsProps) => {
           <label htmlFor="name" className="text-default mb-2 block text-sm font-medium">
             {t("full_name")}
           </label>
-          <input
+          <Input
             {...register("name", {
               required: true,
             })}
@@ -85,7 +85,6 @@ const UserSettings = (props: IUserSettingsProps) => {
             type="text"
             autoComplete="off"
             autoCorrect="off"
-            className="border-default w-full rounded-md border text-sm"
           />
           {errors.name && (
             <p data-testid="required" className="py-2 text-xs text-red-500">
@@ -106,17 +105,18 @@ const UserSettings = (props: IUserSettingsProps) => {
             className="mt-2 w-full rounded-md text-sm"
           />
 
-          <p className="text-subtle dark:text-inverted mt-3 flex flex-row font-sans text-xs leading-tight">
+          <p className="text-subtle mt-3 flex flex-row font-sans text-xs leading-tight">
             {t("current_time")} {dayjs().tz(selectedTimeZone).format("LT").toString().toLowerCase()}
           </p>
         </div>
       </div>
       <Button
+        EndIcon="arrow-right"
         type="submit"
         className="mt-8 flex w-full flex-row justify-center"
-        disabled={mutation.isLoading}>
+        loading={mutation.isPending}
+        disabled={mutation.isPending}>
         {t("next_step_text")}
-        <ArrowRight className="ml-2 h-4 w-4 self-center" aria-hidden="true" />
       </Button>
     </form>
   );

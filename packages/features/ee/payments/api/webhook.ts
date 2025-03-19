@@ -4,18 +4,21 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import type Stripe from "stripe";
 
 import stripe from "@calcom/app-store/stripepayment/lib/server";
-import EventManager from "@calcom/core/EventManager";
-import { sendAttendeeRequestEmail, sendOrganizerRequestEmail } from "@calcom/emails";
+import { sendAttendeeRequestEmailAndSMS, sendOrganizerRequestEmail } from "@calcom/emails";
 import { doesBookingRequireConfirmation } from "@calcom/features/bookings/lib/doesBookingRequireConfirmation";
+import { getAllCredentials } from "@calcom/features/bookings/lib/getAllCredentialsForUsersOnEvent/getAllCredentials";
 import { handleConfirmation } from "@calcom/features/bookings/lib/handleConfirmation";
+import EventManager from "@calcom/lib/EventManager";
 import { IS_PRODUCTION } from "@calcom/lib/constants";
 import { getErrorFromUnknown } from "@calcom/lib/errors";
 import { HttpError as HttpCode } from "@calcom/lib/http-error";
 import logger from "@calcom/lib/logger";
 import { getBooking } from "@calcom/lib/payment/getBooking";
 import { handlePaymentSuccess } from "@calcom/lib/payment/handlePaymentSuccess";
+import { safeStringify } from "@calcom/lib/safeStringify";
 import { prisma } from "@calcom/prisma";
 import { BookingStatus } from "@calcom/prisma/enums";
+import { eventTypeMetaDataSchemaWithTypedApps } from "@calcom/prisma/zod-utils";
 
 const log = logger.getSubLogger({ prefix: ["[paymentWebhook]"] });
 
@@ -38,7 +41,7 @@ export async function handleStripePaymentSuccess(event: Stripe.Event) {
   });
 
   if (!payment?.bookingId) {
-    log.error(JSON.stringify(paymentIntent), JSON.stringify(payment));
+    log.error("Stripe: Payment Not Found", safeStringify(paymentIntent), safeStringify(payment));
     throw new HttpCode({ statusCode: 204, message: "Payment not found" });
   }
   if (!payment?.bookingId) throw new HttpCode({ statusCode: 204, message: "Payment not found" });
@@ -70,8 +73,15 @@ const handleSetupSuccess = async (event: Stripe.Event) => {
       eventType,
     },
   });
+
+  const metadata = eventTypeMetaDataSchemaWithTypedApps.parse(eventType?.metadata);
+  const allCredentials = await getAllCredentials(user, {
+    ...booking.eventType,
+    metadata,
+  });
+
   if (!requiresConfirmation) {
-    const eventManager = new EventManager(user);
+    const eventManager = new EventManager({ ...user, credentials: allCredentials }, metadata?.apps);
     const scheduleResult = await eventManager.create(evt);
     bookingData.references = { create: scheduleResult.referencesToCreate };
     bookingData.status = BookingStatus.ACCEPTED;
@@ -98,7 +108,7 @@ const handleSetupSuccess = async (event: Stripe.Event) => {
 
   if (!requiresConfirmation) {
     await handleConfirmation({
-      user,
+      user: { ...user, credentials: allCredentials },
       evt,
       prisma,
       bookingId: booking.id,
@@ -106,8 +116,8 @@ const handleSetupSuccess = async (event: Stripe.Event) => {
       paid: true,
     });
   } else {
-    await sendOrganizerRequestEmail({ ...evt });
-    await sendAttendeeRequestEmail({ ...evt }, evt.attendees[0]);
+    await sendOrganizerRequestEmail({ ...evt }, eventType.metadata);
+    await sendAttendeeRequestEmailAndSMS({ ...evt }, evt.attendees[0], eventType.metadata);
   }
 };
 
@@ -120,7 +130,7 @@ const webhookHandlers: Record<string, WebhookHandler | undefined> = {
 
 /**
  * @deprecated
- * We need to create a PaymentManager in `@calcom/core`
+ * We need to create a PaymentManager in `@calcom/lib`
  * to prevent circular dependencies on App Store migration
  */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {

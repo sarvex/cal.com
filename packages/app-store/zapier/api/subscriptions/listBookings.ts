@@ -1,7 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 
 import { listBookings } from "@calcom/features/webhooks/lib/scheduleTrigger";
-import { defaultHandler, defaultResponder } from "@calcom/lib/server";
+import { defaultHandler } from "@calcom/lib/server/defaultHandler";
+import { defaultResponder } from "@calcom/lib/server/defaultResponder";
 
 import { validateAccountOrApiKey } from "../../lib/validateAccountOrApiKey";
 
@@ -26,10 +27,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
       ? authorizedAccount.name
       : null;
 
-    const requested = teamInfo ? `team: ${teamInfo}` : `user: ${userInfo}`;
-    return res.status(404).json({
-      message: `There are no bookings to retrieve, please create a booking first. Requested: \`${requested}\``,
-    });
+    return res.status(201).json([]);
   }
   res.status(201).json(bookings);
 }

@@ -1,14 +1,15 @@
 import { auth, Client, webln } from "@getalby/sdk";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useSearchParams } from "next/navigation";
 import { useState, useCallback, useEffect } from "react";
-import { Toaster } from "react-hot-toast";
+import { Toaster } from "sonner";
 
+import AppNotInstalledMessage from "@calcom/app-store/_components/AppNotInstalledMessage";
+import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc";
 import { Badge, Button, showToast } from "@calcom/ui";
-import { Info } from "@calcom/ui/components/icon";
+import { Icon } from "@calcom/ui";
 
 import { albyCredentialKeysSchema } from "../../lib/albyCredentialKeysSchema";
 
@@ -20,7 +21,7 @@ export interface IAlbySetupProps {
 }
 
 export default function AlbySetup(props: IAlbySetupProps) {
-  const params = useSearchParams();
+  const params = useCompatSearchParams();
   if (params?.get("callback") === "true") {
     return <AlbySetupCallback />;
   }
@@ -30,7 +31,7 @@ export default function AlbySetup(props: IAlbySetupProps) {
 
 function AlbySetupCallback() {
   const [error, setError] = useState<string | null>(null);
-  const searchParams = useSearchParams();
+  const searchParams = useCompatSearchParams();
 
   useEffect(() => {
     if (!searchParams) {
@@ -72,11 +73,11 @@ function AlbySetupCallback() {
 function AlbySetupPage(props: IAlbySetupProps) {
   const router = useRouter();
   const { t } = useLocale();
-  const integrations = trpc.viewer.integrations.useQuery({ variant: "payment", appId: "alby" });
+  const integrations = trpc.viewer.apps.integrations.useQuery({ variant: "payment", appId: "alby" });
   const [albyPaymentAppCredentials] = integrations.data?.items || [];
   const [credentialId] = albyPaymentAppCredentials?.userCredentialIds || [-1];
   const showContent = !!integrations.data && integrations.isSuccess && !!credentialId;
-  const saveKeysMutation = trpc.viewer.appsRouter.updateAppCredentials.useMutation({
+  const saveKeysMutation = trpc.viewer.apps.updateAppCredentials.useMutation({
     onSuccess: () => {
       showToast(t("keys_have_been_saved"), "success");
       router.push("/event-types");
@@ -121,7 +122,7 @@ function AlbySetupPage(props: IAlbySetupProps) {
     });
   }, [credentialId, props.clientId, props.clientSecret, saveKeysMutation]);
 
-  if (integrations.isLoading) {
+  if (integrations.isPending) {
     return <div className="absolute z-50 flex h-screen w-full items-center bg-gray-200" />;
   }
 
@@ -169,9 +170,9 @@ function AlbySetupPage(props: IAlbySetupProps) {
 
             {/* TODO: remove when invoices are generated using user identifier */}
             <div className="mt-4 rounded bg-blue-50 p-3 text-sm text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-              <Info className="mb-0.5 inline-flex h-4 w-4" /> Your Alby lightning address will be used to
-              generate invoices. If you update your lightning address, please disconnect and setup the Alby
-              app again.
+              <Icon name="info" className="mb-0.5 inline-flex h-4 w-4" /> Your Alby lightning address will be
+              used to generate invoices. If you update your lightning address, please disconnect and setup the
+              Alby app again.
             </div>
             <Link href="/apps/alby">
               <Button color="secondary">Go to App Store Listing</Button>
@@ -179,14 +180,7 @@ function AlbySetupPage(props: IAlbySetupProps) {
           </div>
         </div>
       ) : (
-        <div className="ml-5 mt-5">
-          <div>Alby</div>
-          <div className="mt-3">
-            <Link href="/apps/alby" passHref={true} legacyBehavior>
-              <Button>{t("go_to_app_store")}</Button>
-            </Link>
-          </div>
-        </div>
+        <AppNotInstalledMessage appName="alby" />
       )}
       <Toaster position="bottom-right" />
     </div>
