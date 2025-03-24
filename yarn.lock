@@ -2480,7 +2480,7 @@ __metadata:
     dompurify: ^3.2.3
     jest: ^29.7.0
     marked: ^15.0.3
-    postcss: ^8.4.38
+    postcss: ^8.5.3
     postcss-import: ^16.1.0
     postcss-prefixer: ^3.0.0
     postcss-prefixwrap: 1.46.0
@@ -2784,7 +2784,7 @@ __metadata:
     "@vitejs/plugin-basic-ssl": ^1.1.0
     autoprefixer: ^10.4.12
     npm-run-all: ^4.1.5
-    postcss: ^8.4.18
+    postcss: ^8.5.3
     tailwindcss: ^3.3.3
     typescript: ^4.9.4
     vite: ^4.1.2
@@ -3877,7 +3877,7 @@ __metadata:
     nodemailer: ^6.7.8
     nuqs: ^1.20.0
     otplib: ^12.0.1
-    postcss: ^8.4.18
+    postcss: ^8.5.3
     posthog-js: ^1.164.1
     posthog-node: ^4.2.0
     qrcode: ^1.5.1
@@ -29211,6 +29211,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"nanoid@npm:^3.3.8":
+  version: 3.3.11
+  resolution: "nanoid@npm:3.3.11"
+  bin:
+    nanoid: bin/nanoid.cjs
+  checksum: 3be20d8866a57a6b6d218e82549711c8352ed969f9ab3c45379da28f405363ad4c9aeb0b39e9abc101a529ca65a72ff9502b00bf74a912c4b64a9d62dfd26c29
+  languageName: node
+  linkType: hard
+
 "native-duplexpair@npm:^1.0.0":
   version: 1.0.0
   resolution: "native-duplexpair@npm:1.0.0"
@@ -31690,17 +31699,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"postcss@npm:^8.4.18":
-  version: 8.4.18
-  resolution: "postcss@npm:8.4.18"
-  dependencies:
-    nanoid: ^3.3.4
-    picocolors: ^1.0.0
-    source-map-js: ^1.0.2
-  checksum: 9349fd99849b2e3d2e134ff949b7770ecb12375f352723ce2bcc06167eba3850ea7844c1b191a85cd915d6a396b4e8ee9a5267e6cc5d8d003d0cbc7a97555d39
-  languageName: node
-  linkType: hard
-
 "postcss@npm:^8.4.23":
   version: 8.4.23
   resolution: "postcss@npm:8.4.23"
@@ -31712,17 +31710,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"postcss@npm:^8.4.38":
-  version: 8.4.38
-  resolution: "postcss@npm:8.4.38"
-  dependencies:
-    nanoid: ^3.3.7
-    picocolors: ^1.0.0
-    source-map-js: ^1.2.0
-  checksum: 649f9e60a763ca4b5a7bbec446a069edf07f057f6d780a5a0070576b841538d1ecf7dd888f2fbfd1f76200e26c969e405aeeae66332e6927dbdc8bdcb90b9451
-  languageName: node
-  linkType: hard
-
 "postcss@npm:^8.4.43":
   version: 8.4.47
   resolution: "postcss@npm:8.4.47"
@@ -31731,6 +31718,17 @@ __metadata:
     picocolors: ^1.1.0
     source-map-js: ^1.2.1
   checksum: f78440a9d8f97431dd2ab1ab8e1de64f12f3eff38a3d8d4a33919b96c381046a314658d2de213a5fa5eb296b656de76a3ec269fdea27f16d5ab465b916a0f52c
+  languageName: node
+  linkType: hard
+
+"postcss@npm:^8.5.3":
+  version: 8.5.3
+  resolution: "postcss@npm:8.5.3"
+  dependencies:
+    nanoid: ^3.3.8
+    picocolors: ^1.1.1
+    source-map-js: ^1.2.1
+  checksum: da574620eb84ff60e65e1d8fc6bd5ad87a19101a23d0aba113c653434161543918229a0f673d89efb3b6d4906287eb04b957310dbcf4cbebacad9d1312711461
   languageName: node
   linkType: hard
 
@@ -35213,13 +35211,6 @@ __metadata:
   version: 1.0.2
   resolution: "source-map-js@npm:1.0.2"
   checksum: c049a7fc4deb9a7e9b481ae3d424cc793cb4845daa690bc5a05d428bf41bf231ced49b4cf0c9e77f9d42fdb3d20d6187619fc586605f5eabe995a316da8d377c
-  languageName: node
-  linkType: hard
-
-"source-map-js@npm:^1.2.0":
-  version: 1.2.0
-  resolution: "source-map-js@npm:1.2.0"
-  checksum: 791a43306d9223792e84293b00458bf102a8946e7188f3db0e4e22d8d530b5f80a4ce468eb5ec0bf585443ad55ebbd630bf379c98db0b1f317fd902500217f97
   languageName: node
   linkType: hard
 
