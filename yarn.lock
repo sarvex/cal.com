@@ -2305,7 +2305,7 @@ __metadata:
     "@nest-lab/throttler-storage-redis": 1.0.0
     "@nestjs/bull": ^10.1.1
     "@nestjs/cli": ^10.0.0
-    "@nestjs/common": ^10.0.0
+    "@nestjs/common": ^11.0.17
     "@nestjs/config": ^3.1.1
     "@nestjs/core": ^10.0.0
     "@nestjs/jwt": ^10.2.0
@@ -6897,16 +6897,17 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@nestjs/common@npm:^10.0.0":
-  version: 10.3.3
-  resolution: "@nestjs/common@npm:10.3.3"
+"@nestjs/common@npm:^11.0.17":
+  version: 11.0.17
+  resolution: "@nestjs/common@npm:11.0.17"
   dependencies:
     iterare: 1.2.1
-    tslib: 2.6.2
+    tslib: 2.8.1
     uid: 2.0.2
   peerDependencies:
     class-transformer: "*"
     class-validator: "*"
+    file-type: ^20.4.1
     reflect-metadata: ^0.1.12 || ^0.2.0
     rxjs: ^7.1.0
   peerDependenciesMeta:
@@ -6914,7 +6915,9 @@ __metadata:
       optional: true
     class-validator:
       optional: true
-  checksum: 604862c8ca21751899e770d54a4a14f57f22d8792fa2b4834015bf775f17922cc64acd52b66f8684e7bb4f9c25a26056d679e7d85211b1d9db9e47a8b217a206
+    file-type:
+      optional: true
+  checksum: 284571343ef3fe47823b34acb28e02d5ffd4c11d77ca6c56228227e5ad9fe3f8bee0fc6e9574afdd5c5710f79efd9bcb7e3d7fdfdf13a9cf4a9f4470279d0f6a
   languageName: node
   linkType: hard
 
@@ -37330,6 +37333,13 @@ __metadata:
   version: 2.6.2
   resolution: "tslib@npm:2.6.2"
   checksum: 329ea56123005922f39642318e3d1f0f8265d1e7fcb92c633e0809521da75eeaca28d2cf96d7248229deb40e5c19adf408259f4b9640afd20d13aecc1430f3ad
+  languageName: node
+  linkType: hard
+
+"tslib@npm:2.8.1":
+  version: 2.8.1
+  resolution: "tslib@npm:2.8.1"
+  checksum: e4aba30e632b8c8902b47587fd13345e2827fa639e7c3121074d5ee0880723282411a8838f830b55100cbe4517672f84a2472667d355b81e8af165a55dc6203a
   languageName: node
   linkType: hard
 
