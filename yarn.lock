@@ -2363,7 +2363,7 @@ __metadata:
     uuid: ^8.3.2
     winston: ^3.13.0
     winston-transport: ^4.7.0
-    zod: ^3.22.4
+    zod: ^4.0.15
   languageName: unknown
   linkType: soft
 
@@ -2392,7 +2392,7 @@ __metadata:
     typescript: ^4.9.4
     tzdata: ^1.0.30
     uuid: ^8.3.2
-    zod: ^3.22.4
+    zod: ^4.0.15
   languageName: unknown
   linkType: soft
 
@@ -2730,7 +2730,7 @@ __metadata:
     "@sendgrid/mail": ^7.6.2
     libphonenumber-js: ^1.11.18
     twilio: ^3.80.1
-    zod: ^3.22.4
+    zod: ^4.0.15
   languageName: unknown
   linkType: soft
 
@@ -3413,7 +3413,7 @@ __metadata:
     prisma: ^5.4.2
     prisma-kysely: ^1.7.1
     ts-node: ^10.9.1
-    zod: ^3.22.4
+    zod: ^4.0.15
     zod-prisma: ^0.5.4
   languageName: unknown
   linkType: soft
@@ -3559,7 +3559,7 @@ __metadata:
     stripe: ^9.16.0
     ts-node: ^10.9.1
     uuid: ^8.3.2
-    zod: ^3.22.4
+    zod: ^4.0.15
   languageName: unknown
   linkType: soft
 
@@ -3638,7 +3638,7 @@ __metadata:
     "@trpc/server": 11.0.0-next-beta.222
     superjson: 1.9.1
     typescript: ^5.8.2
-    zod: ^3.22.4
+    zod: ^4.0.15
   languageName: unknown
   linkType: soft
 
@@ -3915,7 +3915,7 @@ __metadata:
     turndown: ^7.1.3
     typescript: ^4.9.4
     uuid: ^8.3.2
-    zod: ^3.22.4
+    zod: ^4.0.15
   languageName: unknown
   linkType: soft
 
@@ -39928,6 +39928,13 @@ __metadata:
   version: 3.23.8
   resolution: "zod@npm:3.23.8"
   checksum: 15949ff82118f59c893dacd9d3c766d02b6fa2e71cf474d5aa888570c469dbf5446ac5ad562bb035bf7ac9650da94f290655c194f4a6de3e766f43febd432c5c
+  languageName: node
+  linkType: hard
+
+"zod@npm:^4.0.15":
+  version: 4.0.15
+  resolution: "zod@npm:4.0.15"
+  checksum: d52dc9df5ed7a066ac7c3193862a2aa2c48ee45476403a88ab1dbab8f701cec1c50d9309cf550e4531722737d0b2fad853c8e9a52a928c13a3cbb9ee3498daba
   languageName: node
   linkType: hard
 
