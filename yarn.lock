@@ -2925,7 +2925,7 @@ __metadata:
     bcryptjs: ^2.4.3
     dub: ^0.59.1
     handlebars: ^4.7.7
-    jose: ^4.13.1
+    jose: ^6.1.0
     lru-cache: ^9.0.3
     next-auth: ^4.22.1
     nodemailer: ^6.7.8
@@ -3852,7 +3852,7 @@ __metadata:
     handlebars: ^4.7.7
     ical.js: ^1.4.0
     ics: ^2.37.0
-    jose: ^4.13.1
+    jose: ^6.1.0
     jsdom: ^22.0.0
     kbar: ^0.1.0-beta.36
     libphonenumber-js: ^1.11.18
@@ -26537,7 +26537,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"jose@npm:^4.11.4, jose@npm:^4.13.1":
+"jose@npm:^4.11.4":
   version: 4.13.1
   resolution: "jose@npm:4.13.1"
   checksum: 89be959573beee69bd443493887d78799fd42340b45afa2c6681beda30314bcdfa5575f6977203c199e4c3e0ec2fc18d3c94745e7f0d59db51dedfae0efee63d
@@ -26548,6 +26548,13 @@ __metadata:
   version: 4.15.4
   resolution: "jose@npm:4.15.4"
   checksum: dccad91cb3357f36423774a0b89ad830dd84b31090de65cd139b85488439f16a00f8c59c0773825e8a1adb0dd9d13ad725ad66e6ea33880ecb3959bb99e1ea5b
+  languageName: node
+  linkType: hard
+
+"jose@npm:^6.1.0":
+  version: 6.1.0
+  resolution: "jose@npm:6.1.0"
+  checksum: f9596a3161b5dabfdd0b7d490f2710f2cc8d460b0a2e1f3262fd2f90652abbb535e4f80e80d3854e7264c9526dcdac5e28693b4d4b1803f622728d7dcde02010
   languageName: node
   linkType: hard
 
